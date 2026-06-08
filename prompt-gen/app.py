@@ -43,8 +43,7 @@ def _task_get(task_id):
 # Brand body parsing
 # ===========================================================================
 
-_LIST_FIELDS = ("keywords", "use_cases", "pain_points", "features", "competitors",
-                "target_subreddits")
+_LIST_FIELDS = ("keywords", "use_cases", "pain_points", "features", "competitors")
 
 
 def _as_list(val):
@@ -188,7 +187,6 @@ def _run_generation(task_id, brand, params):
     try:
         gen = PostGenerator()
         result = gen.generate_posts(
-            subreddit=params.get("subreddit"),
             brands=[brand],
             count=params.get("count"),
             intent_counts=params.get("intent_counts"),
@@ -219,7 +217,6 @@ def api_generate():
         return jsonify({"error": f"count must be one of {list(POST_BATCH_SIZES)}"}), 400
 
     params = {
-        "subreddit": data.get("subreddit"),
         "seed": data.get("seed"),
         "count": count,
         "intent_counts": data.get("intent_counts"),
@@ -285,7 +282,7 @@ def api_export_csv():
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(["#", "brand", "intent", "region", "seed", "anchor",
-                     "target_query", "title", "body", "score"])
+                     "target_query", "title", "score"])
     for p in posts:
         writer.writerow([
             p.get("post_number"),
@@ -296,7 +293,6 @@ def api_export_csv():
             p.get("anchor") or "",
             p.get("target_query") or "",
             p.get("title") or "",
-            p.get("body") or "",
             p.get("ai_query_score") or 0,
         ])
     csv_bytes = buf.getvalue()

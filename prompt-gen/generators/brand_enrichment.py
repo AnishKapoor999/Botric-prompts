@@ -76,9 +76,9 @@ def _extract_visible_text(html):
 
 
 _ENRICH_PROMPT = """You are analyzing a brand to extract structured context for a GEO (Generative
-Engine Optimization) content strategy. The goal is to write Reddit posts that mirror
-the long-tail questions real users type into ChatGPT/Perplexity about this brand's
-domain — WITHOUT naming the brand itself.
+Engine Optimization) content strategy. The goal is to surface the long-tail questions
+real users type into AI search engines (ChatGPT / Perplexity / Gemini) about this
+brand's domain — WITHOUT naming the brand itself.
 
 BRAND NAME: {name}
 BRAND URL: {url}
@@ -92,7 +92,7 @@ Extract the following fields. Be specific and concrete — vague answers are use
 - category: A precise product category, 3-8 words. Example: "project management SaaS for remote teams", "direct-to-consumer electric toothbrush". Not "software" or "product".
 - audience: The ideal customer profile (ICP). Who buys/uses this? Role, team size, industry, context. 1-2 sentences.
 - use_cases: 4-6 concrete jobs-to-be-done — what problems do users hire this product to solve? Each item should be a short phrase ("running async standups across timezones"), not a sentence.
-- pain_points: 4-6 concrete pains the product addresses. Each item is a phrase ("tickets get lost between Slack and Jira"). These are the pains real users would complain about on Reddit.
+- pain_points: 4-6 concrete pains the product addresses. Each item is a phrase ("tickets get lost between Slack and Jira"). These are the pains real users would describe when searching for a solution.
 - features: 4-6 key differentiating features or capabilities. Each is a short phrase.
 - competitors: 3-8 direct competitor brand/product NAMES (real names like "Notion", "Asana", "Linear"). These will be used in comparison-intent posts, so accuracy matters. If you're unsure, include fewer but only confident ones.
 - icps: 3-5 DISTINCT ideal customer profiles — the different kinds of buyers/users for this brand. Each is an object {{label, role, segment, context, pains}}: label = a 2-4 word name ("solo podcaster"); role = who they are; segment = market/size/industry; context = the situation in which they need this; pains = 1-3 short pain phrases specific to THIS profile. Make the profiles genuinely different from each other, not rewordings.

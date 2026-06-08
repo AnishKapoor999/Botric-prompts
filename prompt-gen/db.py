@@ -28,7 +28,6 @@ def _ensure_db_dir():
 # ---- JSON list/string column groups ----
 _BRAND_LIST_FIELDS = (
     "keywords", "use_cases", "pain_points", "features", "competitors",
-    "target_subreddits",
 )
 _BRAND_STR_FIELDS = ("name", "domain_url", "context", "category", "audience")
 
@@ -77,14 +76,12 @@ def init_db():
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 brand_id        INTEGER REFERENCES brands(id),
                 title           TEXT NOT NULL,
-                body            TEXT NOT NULL,
                 intent          TEXT,
                 ai_query_score  INTEGER DEFAULT 0,
                 ai_search_meta  TEXT,
                 concept_checklist TEXT,
                 post_number     INTEGER,
                 prompt_version  TEXT,
-                target_subreddit TEXT,
                 created_at      TEXT DEFAULT (datetime('now'))
             );
 
@@ -112,7 +109,6 @@ def init_db():
             "competitors": "TEXT",
             "enriched_at": "TEXT",
             "icps": "TEXT",
-            "target_subreddits": "TEXT",
         }
         existing = {r["name"] for r in conn.execute("PRAGMA table_info(brands)")}
         for col, typ in brand_alter_cols.items():
@@ -147,8 +143,8 @@ def create_brand(data):
             """
             INSERT INTO brands
               (name, domain_url, context, keywords, category, audience, use_cases,
-               pain_points, features, competitors, icps, target_subreddits, enriched_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+               pain_points, features, competitors, icps, enriched_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 (data.get("name") or "").strip(),
@@ -162,7 +158,6 @@ def create_brand(data):
                 _dumps(data.get("features") or []),
                 _dumps(data.get("competitors") or []),
                 _dumps(data.get("icps") or []),
-                _dumps(data.get("target_subreddits") or []),
                 enriched_at,
             ),
         )
@@ -268,21 +263,19 @@ def save_post(brand_id, post):
         cur = conn.execute(
             """
             INSERT INTO posts
-              (brand_id, title, body, intent, ai_query_score, ai_search_meta,
-               concept_checklist, post_number, prompt_version, target_subreddit)
-            VALUES (?,?,?,?,?,?,?,?,?,?)
+              (brand_id, title, intent, ai_query_score, ai_search_meta,
+               concept_checklist, post_number, prompt_version)
+            VALUES (?,?,?,?,?,?,?,?)
             """,
             (
                 brand_id,
                 post.get("title") or "",
-                post.get("body") or "",
                 post.get("intent"),
                 int(post.get("ai_query_score") or 0),
                 json.dumps(post.get("ai_search_meta") or {}),
                 json.dumps(post.get("concept_checklist") or []),
                 num,
                 post.get("prompt_version"),
-                post.get("target_subreddit"),
             ),
         )
         post_id = cur.lastrowid

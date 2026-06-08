@@ -4,7 +4,7 @@ import re
 
 from config import ANTHROPIC_API_KEY, DEFAULT_MODEL
 
-# Phrases that make AI-generated Reddit posts read as spam / marketing. The
+# Phrases that make AI-generated prompts read as spam / marketing. The
 # generators are instructed to avoid these; kept here as a single source of truth.
 BANNED_PHRASES = [
     "game changer", "game-changer", "look no further", "in today's world",

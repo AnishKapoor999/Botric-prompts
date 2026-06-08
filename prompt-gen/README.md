@@ -1,9 +1,9 @@
 # Botric — Prompt-Generation System
 
-A local, single-operator tool that generates Reddit-style GEO *prompts* (post titles +
-bodies) for a brand using the AI-Search **region / sparse-fan-out → cluster → generate**
-pipeline. No auth, runs locally. Built to the handover spec
-(`Botric_SEO_Prompt_Generation_Spec.md`).
+A local, single-operator tool that generates GEO *prompts* (search-style queries real
+users type into ChatGPT / Perplexity / Gemini) for a brand using the AI-Search
+**region / sparse-fan-out → cluster → generate** pipeline. No auth, runs locally. Built
+to the handover spec (`Botric_SEO_Prompt_Generation_Spec.md`).
 
 ## What it does
 

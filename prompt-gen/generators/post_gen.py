@@ -63,7 +63,7 @@ Do this in your head, then return the merged result:
      rewrites would get essentially the SAME AI answer, keep only ONE. Aim for
      ~5-8 rewrites TOTAL — fewer, distinct regions beat many synonyms.
   4. Produce a concise CONCEPT/PHRASING CHECKLIST: the key natural-language
-     phrasings, synonyms and domain terms a Reddit thread should contain so it
+     phrasings, synonyms and domain terms the generated prompt should contain so it
      matches the whole cluster for both keyword (BM25) and embedding retrieval.
 
 Return JSON only:
@@ -102,15 +102,15 @@ Return JSON only:
 {{"classified": [{{"query": "the query verbatim", "region": "region label"}}, ...]}}"""
 
 
-_CANDIDATE_PROMPT = """You are writing ONE Reddit post for a GEO campaign. The goal: when a real person
-asks an AI assistant (ChatGPT / Perplexity / Gemini) the kind of question below, this
-thread is what gets retrieved and the answer recommends the right product. You must
+_CANDIDATE_PROMPT = """You are writing ONE search-style prompt for a GEO campaign. The goal: when a real
+person asks an AI assistant (ChatGPT / Perplexity / Gemini) the kind of question below,
+this prompt is what gets retrieved and the answer recommends the right product. You must
 NOT name any of these brands: {target_names}.
 
 BRAND CONTEXT (for grounding only — never name the brand):
 {brand_block}
 
-ANCHOR (every title MUST stay on this platform/use-case; you may broaden ONLY to a
+ANCHOR (the prompt MUST stay on this platform/use-case; you may broaden ONLY to a
 NAMED adjacent variant, never to something generic like "my videos"): {anchor}
 
 INTENT: {intent}
@@ -118,32 +118,30 @@ INTENT: {intent}
   - comparison: weighing named options ("X vs Y", "alternative to <competitor>").
   - informational: advice-seeking that should still surface a product recommendation.
 
-TARGET SUB-QUERY (the engine-style query this thread must land on): "{target_query}"
+TARGET SUB-QUERY (the engine-style query this prompt must land on): "{target_query}"
 
 CONCEPT / PHRASING CHECKLIST (weave these natural phrasings, synonyms and domain
-terms into the BODY so the thread matches for both keyword (BM25) and embedding
+terms into the prompt so it matches for both keyword (BM25) and embedding
 retrieval):
 {checklist}
 {coverage_block}
-WRITE THE POST so that:
-  - The TITLE reads like a real person asking a recommendation QUESTION (not a vent,
-    not a bare statement, not machine-speak). On-anchor. A verbatim copy of the
-    engine query looks like spam — paraphrase it naturally in the title.
-  - The BODY (2-5 short paragraphs) sounds like a genuine Reddit poster giving
-    context, and it CONTAINS the target sub-query's literal wording (for keyword
-    match) alongside natural paraphrases and the checklist phrasings (for embedding
-    match). End with a real question.
+WRITE THE PROMPT so that:
+  - It reads like a real person asking a recommendation QUESTION (not a vent, not a
+    bare statement, not machine-speak). On-anchor. A verbatim copy of the engine
+    query looks like spam — paraphrase it naturally.
+  - It CONTAINS the target sub-query's literal wording (for keyword match) alongside
+    natural paraphrases and the checklist phrasings (for embedding match), and reads
+    as a single natural question.
   - Avoid marketing/AI-tell phrases such as: {banned}.
 
 Return JSON only:
-{{"title": "the post title", "body": "the post body"}}"""
+{{"title": "the prompt"}}"""
 
 
-_SCORE_PROMPT = """You are scoring a Reddit post TITLE for a GEO campaign whose goal is to get a
+_SCORE_PROMPT = """You are scoring a search-style PROMPT for a GEO campaign whose goal is to get a
 specific product/service recommended by AI assistants (ChatGPT / Perplexity / Google).
 
-Title: "{title}"
-Body preview: "{body_preview}"
+Prompt: "{title}"
 
 Rate 0-10 on BOTH dimensions together:
   (1) How likely a real person types this exact question (or close paraphrase) into an AI / search engine, AND
@@ -297,10 +295,6 @@ class PostGenerator:
                 vals = b.get(field) or []
                 if vals:
                     lines.append(f"  {label}: {', '.join(str(v) for v in vals)}")
-
-            subs = b.get("target_subreddits") or []
-            if subs:
-                lines.append(f"  Target subreddits (flavor): {', '.join(str(s) for s in subs)}")
         return "\n".join(lines)
 
     # -------------------------------------------------------------------
@@ -478,11 +472,11 @@ class PostGenerator:
     def _generate_candidates_for_intent(self, brands, intent, anchor, target_query,
                                          checklist, n=1, facet_targets=None,
                                          avoid_facets=None):
-        """Draft `n` candidate {title, body} for one (intent, target_query).
+        """Draft `n` candidate {title} prompts for one (intent, target_query).
 
         On the standard (no anchor / no target_query) route, `facet_targets` injects a
-        COVERAGE TARGET block so the post deliberately covers one distinct brand
-        offering; `avoid_facets` (for posts beyond the available facets) tells the model
+        COVERAGE TARGET block so the prompt deliberately covers one distinct brand
+        offering; `avoid_facets` (for prompts beyond the available facets) tells the model
         to pick a different offering than those already used this batch.
         """
         brand_block = self._build_enriched_brand_block(brands)
@@ -508,12 +502,10 @@ class PostGenerator:
             if not result or not isinstance(result, dict):
                 continue
             title = str(result.get("title") or "").strip()
-            body = str(result.get("body") or "").strip()
-            if not title or not body:
+            if not title:
                 continue
             candidates.append({
                 "title": title,
-                "body": body,
                 "intent": intent,
                 "anchor": anchor,
                 "target_query": target_query,
@@ -523,9 +515,8 @@ class PostGenerator:
     # -------------------------------------------------------------------
     # Scoring
     # -------------------------------------------------------------------
-    def _score_ai_query_relevance(self, title, body, anchor=None, target_query=None):
+    def _score_ai_query_relevance(self, title, anchor=None, target_query=None):
         """Return 0-10. Default 5 on parse failure."""
-        body_preview = (body or "")[:200]
         ai_block = ""
         if anchor is not None or target_query is not None:
             ai_block = _AI_SEARCH_SCORE_BLOCK.format(
@@ -534,7 +525,6 @@ class PostGenerator:
             )
         prompt = _SCORE_PROMPT.format(
             title=title or "",
-            body_preview=body_preview,
             ai_search_block=ai_block,
         )
         result = self.client.call(prompt, max_tokens=256, temperature=0.3)
@@ -609,7 +599,7 @@ class PostGenerator:
             return candidates
         qv = self._embed_texts([c["target_query"].strip() for c in cands])
         pv = self._embed_texts(
-            [((c.get("title") or "") + " " + (c.get("body") or "")).strip() for c in cands]
+            [(c.get("title") or "").strip() for c in cands]
         )
         if not qv or not pv:
             return candidates            # gate inactive -> pass all
@@ -636,9 +626,9 @@ class PostGenerator:
     # -------------------------------------------------------------------
     # Main entrypoint
     # -------------------------------------------------------------------
-    def generate_posts(self, subreddit, brands, count=None, custom_topics=None,
+    def generate_posts(self, brands, count=None, custom_topics=None,
                        intent_counts=None, context_only=False, seed=None,
-                       ai_search=False, observed_queries=None, target_rewrites=None,
+                       ai_search=True, observed_queries=None, target_rewrites=None,
                        progress=None):
         """Generate prompts. In AI-Search mode runs the full fan-out/cluster pipeline.
 
@@ -657,7 +647,6 @@ class PostGenerator:
         # This tool's brand list is single-brand per generation, but the block supports many.
         brand = brands[0]
         brand_id = brand.get("id")
-        target_sub = subreddit or None
 
         # Behavior A — auto-enrich GEO fields on generate, NEVER overwriting the
         # operator's manual `context`. One-time per brand; benefits both routes (the
@@ -700,7 +689,7 @@ class PostGenerator:
             intent_plan = [(it, 1) for it in INTENT_TYPES]
 
         if not ai_search:
-            return self._generate_standard(brands, intent_plan, target_sub, _tick,
+            return self._generate_standard(brands, intent_plan, _tick,
                                            seed=seed, custom_topics=custom_topics)
 
         # ---------- AI-Search flow ----------
@@ -724,7 +713,7 @@ class PostGenerator:
             if not fan:
                 # Total failure -> fall back to the standard path (no steering).
                 _tick("Fan-out failed; generating from brand context…", 20)
-                return self._generate_standard(brands, intent_plan, target_sub, _tick)
+                return self._generate_standard(brands, intent_plan, _tick)
             anchor = fan["anchor"]
             rewrites = fan["rewrites"]
             checklist = fan["checklist"]
@@ -791,7 +780,7 @@ class PostGenerator:
         _tick("Scoring candidates…", 75)
         for c in gated:
             c["ai_query_score"] = self._score_ai_query_relevance(
-                c.get("title"), c.get("body"), anchor=anchor,
+                c.get("title"), anchor=anchor,
                 target_query=c.get("target_query"),
             )
 
@@ -806,7 +795,6 @@ class PostGenerator:
         for c in selected:
             post = {
                 "title": c["title"],
-                "body": c["body"],
                 "intent": c.get("intent"),
                 "ai_query_score": c.get("ai_query_score", 0),
                 "ai_search_meta": {
@@ -817,7 +805,6 @@ class PostGenerator:
                 },
                 "concept_checklist": checklist,
                 "prompt_version": f"{PROMPT_VERSION}-ai-search",
-                "target_subreddit": target_sub,
             }
             _id, num = db.save_post(brand_id, post)
             post["post_number"] = num
@@ -833,7 +820,7 @@ class PostGenerator:
     # -------------------------------------------------------------------
     # Standard (non-AI-search) path: generate straight from brand context.
     # -------------------------------------------------------------------
-    def _generate_standard(self, brands, intent_plan, target_sub, tick,
+    def _generate_standard(self, brands, intent_plan, tick,
                            seed=None, custom_topics=None):
         brand = brands[0]
         brand_id = brand.get("id")
@@ -870,19 +857,17 @@ class PostGenerator:
                 if not cands:
                     continue
                 c = cands[0]
-                score = self._score_ai_query_relevance(c.get("title"), c.get("body"))
+                score = self._score_ai_query_relevance(c.get("title"))
                 meta = {"target_query": facet} if facet else {}
                 if facet:
                     used.append(facet)
                 post = {
                     "title": c["title"],
-                    "body": c["body"],
                     "intent": intent,
                     "ai_query_score": score,
                     "ai_search_meta": meta,
                     "concept_checklist": [],
                     "prompt_version": PROMPT_VERSION,
-                    "target_subreddit": target_sub,
                 }
                 _id, num = db.save_post(brand_id, post)
                 post["post_number"] = num

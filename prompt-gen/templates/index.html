@@ -272,7 +272,6 @@ const App = {
           <div><label class="fld">Pain points</label><textarea class="input" id="bf-pain_points" rows="3">${esc(listVal(b.pain_points))}</textarea></div>
           <div><label class="fld">Features</label><textarea class="input" id="bf-features" rows="3">${esc(listVal(b.features))}</textarea></div>
           <div><label class="fld">Competitors</label><textarea class="input" id="bf-competitors" rows="3">${esc(listVal(b.competitors))}</textarea></div>
-          <div class="sm:col-span-2"><label class="fld">Target subreddits (optional flavor)</label><input class="input" id="bf-target_subreddits" value="${esc((b.target_subreddits||[]).join(', '))}" /></div>
         </div>
       </details>
 
@@ -334,7 +333,6 @@ const App = {
         pain_points: root.querySelector('#bf-pain_points').value,
         features: root.querySelector('#bf-features').value,
         competitors: root.querySelector('#bf-competitors').value,
-        target_subreddits: root.querySelector('#bf-target_subreddits').value,
         icps: collectIcps(),
       };
     }
@@ -600,7 +598,6 @@ const App = {
         <span class="chip chip-live">score ${p.ai_query_score||0}</span>
       </div>
       <div style="font-weight:700;">${esc(p.title)}</div>
-      <p style="font-size:14px;margin-top:6px;white-space:pre-wrap;">${esc(truncate(p.body||'',260))}</p>
       ${p.ai_search_meta&&p.ai_search_meta.target_query? `<div class="muted mt-2" style="font-size:12px;">target: ${esc(p.ai_search_meta.target_query)}</div>`:''}
     </div>`);
     card.addEventListener('click', ()=> this.openPromptModal(p));
@@ -622,7 +619,6 @@ const App = {
         <button class="btn-ghost btn-sm" id="pm-close">Close</button>
       </div>
       <h2 style="font-size:21px;font-weight:700;line-height:1.3;">${esc(p.title)}</h2>
-      <p style="font-size:15px;margin-top:14px;white-space:pre-wrap;line-height:1.65;">${esc(p.body)}</p>
       ${(meta.seed||meta.anchor||meta.target_query)? `<div class="card mt-4" style="background:var(--bg);padding:14px;">
         ${meta.seed? `<div style="font-size:13px;margin-bottom:3px;"><b>Seed:</b> ${esc(meta.seed)}</div>`:''}
         ${meta.anchor? `<div style="font-size:13px;margin-bottom:3px;"><b>Anchor:</b> ${esc(meta.anchor)}</div>`:''}
@@ -630,13 +626,13 @@ const App = {
       </div>`:''}
       <div class="flex justify-between items-center mt-5">
         <button class="btn-ghost" id="pm-delete" style="color:var(--accent-maroon);border-color:var(--accent-maroon);">🗑 Delete prompt</button>
-        <button class="btn-primary" id="pm-copy">Copy title + body</button>
+        <button class="btn-primary" id="pm-copy">Copy prompt</button>
       </div>
     </div>`);
     showModal(node);
     node.querySelector('#pm-close').addEventListener('click', closeModal);
     node.querySelector('#pm-copy').addEventListener('click', ()=> {
-      const text = (p.title||'') + '\n\n' + (p.body||'');
+      const text = (p.title||'');
       if (navigator.clipboard) navigator.clipboard.writeText(text);
       toast('Copied to clipboard');
     });
@@ -822,15 +818,14 @@ const App = {
 
     const table = el(`<div class="card" style="padding:0;overflow:hidden;">
       <table class="report-table">
-        <thead><tr><th>#</th><th>Intent</th><th>Region</th><th>Seed</th><th>Title</th><th>Body</th><th>Score</th><th></th></tr></thead>
+        <thead><tr><th>#</th><th>Intent</th><th>Region</th><th>Seed</th><th>Prompt</th><th>Score</th><th></th></tr></thead>
         <tbody>
         ${prompts.map((p,i)=>`<tr data-idx="${i}" style="cursor:pointer;">
           <td>${p.post_number||''}</td>
           <td><span class="chip chip-sub">${esc(p.intent||'')}</span></td>
           <td>${esc((p.region)||'')}</td>
           <td>${esc(truncate(p.seed||'',24))}</td>
-          <td style="max-width:240px;font-weight:600;"><span class="link">${esc(p.title)}</span></td>
-          <td style="max-width:320px;" class="muted">${esc(truncate(p.body||'',140))}</td>
+          <td style="max-width:420px;font-weight:600;"><span class="link">${esc(p.title)}</span></td>
           <td><span class="chip ${ (p.ai_query_score||0)>=6?'chip-live':'chip-removed'}">${p.ai_query_score||0}</span></td>
           <td><button class="row-del" data-num="${p.post_number}" title="Delete prompt" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:15px;">🗑</button></td>
         </tr>`).join('')}
