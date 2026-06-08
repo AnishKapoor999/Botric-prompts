@@ -311,10 +311,26 @@ def api_export_csv():
 def api_list_clusters():
     brand_id = request.args.get("brand_id", type=int)
     clusters = db.get_ai_search_clusters_for_brand(brand_id)
+
+    # Anchor grounding per cluster, looked up from the brand's learned_context[seed_norm]
+    # (each brand's JSON parsed once). None when a cluster predates the grounding feature.
+    _learned = {}
+
+    def _grounding(bid, seed_norm):
+        if bid not in _learned:
+            b = db.get_brand(bid) or {}
+            lc = b.get("learned_context")
+            _learned[bid] = lc if isinstance(lc, dict) else {}
+        entry = _learned[bid].get(seed_norm)
+        if isinstance(entry, dict) and (entry.get("summary") or "").strip():
+            return {"summary": entry["summary"], "covers": bool(entry.get("covers", True))}
+        return None
+
     out = []
     for c in clusters:
         summary = build_cluster_summary(c["brand_id"], c["seed_norm"])
         if summary:
+            summary["grounding"] = _grounding(c["brand_id"], c["seed_norm"])
             out.append(summary)
     return jsonify({"clusters": out})
 

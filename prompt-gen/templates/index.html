@@ -492,13 +492,14 @@ const App = {
         <div class="sm:col-span-2">
           <label class="fld">Seed (optional — a prompt/question, several, or just a platform/keyword)</label>
           <textarea class="input" id="g-seed" rows="2" placeholder="e.g. any good background music tools for Instagram Reels?  (leave blank to derive from the brand)"></textarea>
+          <div class="muted" style="font-size:12px;margin-top:4px;">Use one coherent theme per seed — it becomes this cluster's anchor. For separate topics, generate each separately (multi-keyword seeds are not auto-split).</div>
         </div>
         <div>
           <label class="fld">Intent split (per-intent counts)</label>
           <div class="grid grid-cols-3 gap-2">
-            <div><div class="muted" style="font-size:12px;">commercial</div><input type="number" min="0" value="1" class="input" id="g-commercial" /></div>
-            <div><div class="muted" style="font-size:12px;">comparison</div><input type="number" min="0" value="1" class="input" id="g-comparison" /></div>
-            <div><div class="muted" style="font-size:12px;">informational</div><input type="number" min="0" value="1" class="input" id="g-informational" /></div>
+            <div><div class="muted" style="font-size:12px;">commercial</div><input type="number" min="0" value="2" class="input" id="g-commercial" /></div>
+            <div><div class="muted" style="font-size:12px;">comparison</div><input type="number" min="0" value="0" class="input" id="g-comparison" /></div>
+            <div><div class="muted" style="font-size:12px;">informational</div><input type="number" min="0" value="0" class="input" id="g-informational" /></div>
           </div>
         </div>
         <div>
@@ -685,6 +686,10 @@ const App = {
           <div class="muted" style="font-size:12px;">covered${c.backfilled?' · backfilled':''}</div>
         </div>
       </div>
+      ${c.grounding ? `<div class="card mt-3" style="background:var(--bg);padding:12px;">
+        <span class="chip ${c.grounding.covers?'chip-live':'chip-removed'}">${c.grounding.covers?'✓ brand offers this':'⚠ weak fit'}</span>
+        <div class="muted" style="font-size:13px;margin-top:6px;">what "${esc(c.seed||'(default)')}" grounding found: ${esc(c.grounding.summary)}</div>
+      </div>` : ''}
       <table class="report-table mt-3">
         <thead><tr><th style="width:28px;"></th><th>Region</th><th>Sub-query</th><th>Status</th><th>Prompts</th></tr></thead>
         <tbody>

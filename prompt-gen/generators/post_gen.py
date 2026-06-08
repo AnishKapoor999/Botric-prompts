@@ -22,6 +22,11 @@ from config import (
 )
 from generators.base import BANNED_PHRASES, ClaudeClient
 
+# Quality floor for the standard (non-AI) route: drop candidates scoring below this
+# rather than padding the batch with weak/vent titles. (AI-Search uses threshold 6 in
+# _select_cluster_best.)
+_STANDARD_SCORE_FLOOR = 5
+
 
 # ===========================================================================
 # Prompt templates
@@ -35,7 +40,7 @@ NOT one literal phrasing.
 
 BRAND CONTEXT (ground the queries here; NEVER output the target brand name(s): {target_names}):
 {brand_block}
-{seed_line}
+{seed_line}{grounding_line}
 Do this in your head, then return the merged result:
   1. ANCHOR — identify the core platform / use-case this campaign targets. If the
      seed names a platform or use-case (e.g. "Instagram Reels", "podcast intros",
@@ -58,6 +63,13 @@ Do this in your head, then return the merged result:
        - Persona / segment          -> for small business, for beginners/pros
        - Adjacent platform          -> a NAMED adjacent (Reels -> Shorts / TikTok)
      You MAY add up to 2 brand-specific regions the 6 don't capture.
+  2b. ENTITY-TYPE — every rewrite must be a query an AI would answer by naming a brand
+     of THIS brand's KIND (see its "Category"); keep every region within that kind. If
+     the brand is a SERVICE / PROVIDER / CLINIC, regions are provider-oriented (best
+     service/clinic, where to get it / who offers it, alternative to a competitor
+     PROVIDER) — NOT treatment-vs-treatment or efficacy ("which works better / does X
+     work") comparisons. (For product / retailer brands this is already satisfied —
+     keep the usual product / buy-intent regions.)
   3. Write ONE rewrite per region — phrased the way the engines actually search
      (short, keyword-ish, real intent), distinct from the others. HARD RULE: if two
      rewrites would get essentially the SAME AI answer, keep only ONE. Aim for
@@ -126,13 +138,26 @@ retrieval):
 {checklist}
 {coverage_block}
 WRITE THE POST so that:
-  - The TITLE reads like a real person asking a recommendation QUESTION (not a vent,
-    not a bare statement, not machine-speak). On-anchor. A verbatim copy of the
-    engine query looks like spam — paraphrase it naturally in the title.
-  - The BODY (2-5 short paragraphs) sounds like a genuine Reddit poster giving
-    context, and it CONTAINS the target sub-query's literal wording (for keyword
-    match) alongside natural paraphrases and the checklist phrasings (for embedding
-    match). End with a real question.
+  - The TITLE is ALWAYS a recommendation QUESTION — never a vent, testimonial, rant, or
+    status update ("so tired of X", "X changed my life"). It reads like a real person
+    asking what to use/buy/try (not a bare statement, not machine-speak). On-anchor. A
+    verbatim copy of the engine query looks like spam — paraphrase it naturally.
+  - OUR-BRAND CHECK — the TITLE's natural answer must name the SAME KIND of entity as
+    this brand (see its "Category" in BRAND CONTEXT above):
+      - PRODUCT / TOOL / APP → ask for the best product/tool for the use-case ("best X
+        for Y", "which X should I use for Z"); product-vs-product comparisons are fine.
+      - SUPPLIER / RETAILER / MARKETPLACE → ask where to buy / who sells / the best place
+        to order the thing.
+      - SERVICE / PROVIDER / CLINIC (you go to it to GET something done) → ask for the
+        PROVIDER: the best service / clinic / where to get it / who offers it for the
+        use-case. Do NOT frame it as "best <treatments>", "<A> vs <B> — which works
+        better?", or "does <X> work?" (those are answered with substances / efficacy,
+        not a provider, so this brand can't be the cited answer). A comparison is fine
+        only when it compares PROVIDERS, e.g. "alternative to <competitor clinic>".
+  - The BODY (2-5 short paragraphs) sounds like a genuine poster giving context, and it
+    CONTAINS the target sub-query's literal wording (for keyword match) alongside natural
+    paraphrases and the checklist phrasings (for embedding match). End with a real
+    question.
   - Avoid marketing/AI-tell phrases such as: {banned}.
 
 Return JSON only:
@@ -152,9 +177,24 @@ Rate 0-10 on BOTH dimensions together:
 High (8-10): Clearly recommendation-seeking — a helpful AI would answer by naming specific products/services/suppliers ("best X for Y", "which X should I use for Z", "go-to X for Y", "alternative to X for Y", "where to buy X online", "best place to order X", "who sells X").
 Medium (5-7): Advice-seeking that MIGHT surface a product recommendation ("has anyone tried X", "what do you use for Y").
 Low (1-4): Generic information / efficacy / how-it-works / "what to look for" / concept questions where the answer is an EXPLANATION rather than a product recommendation (e.g. "do X actually work", "how does X work", "what is X"); also rants, memes, very personal one-offs.
-{ai_search_block}
+CRITICAL: first-person VENTS, TESTIMONIALS and STATUS UPDATES that don't ASK for anything are NOT recommendation-seeking — score them 1-4 even if on-topic (e.g. "frustrated with traditional doctors dismissing X", "so tired of Y", "started using Z — game changer", "X changed my life", "finally found something that works"). A title only scores high if it explicitly asks for what to use/buy/try.
+{ai_search_block}{entity_block}
 Return JSON only:
 {{"score": 0-10, "reasoning": "brief explanation"}}"""
+
+
+_ENTITY_TYPE_BLOCK = """
+ENTITY-TYPE MATCH (relative to the brand — apply CONSERVATIVELY):
+  BRAND KIND: "{brand_kind}". A high-scoring title's natural answer must
+  NAME a brand of THIS kind. Cap the score at 3-4 ONLY when the answer would clearly
+  name a DIFFERENT kind of thing than the brand — e.g. the brand is a SERVICE /
+  PROVIDER / CLINIC but the title's answer is a list of treatments / ingredients /
+  molecules / products, or an efficacy "which works better / does X work" comparison
+  (those name substances, not a provider, so this brand can't be the cited answer).
+  Do NOT cap when the answer's kind MATCHES the brand — including valid same-kind
+  comparisons (product vs product for a product brand; clinic vs clinic for a clinic).
+  When unsure, do NOT apply this cap.
+"""
 
 
 _AI_SEARCH_SCORE_BLOCK = """
@@ -297,12 +337,79 @@ class PostGenerator:
                 vals = b.get(field) or []
                 if vals:
                     lines.append(f"  {label}: {', '.join(str(v) for v in vals)}")
+
+            # Anchor-scoped grounding: what the brand actually offers for specific topics
+            # (only entries where covers=true; learned per seed and accumulated).
+            learned = b.get("learned_context") or {}
+            if isinstance(learned, dict):
+                offers = []
+                for entry in learned.values():
+                    if not isinstance(entry, dict):
+                        continue
+                    if entry.get("covers") and (entry.get("summary") or "").strip():
+                        anc = (entry.get("anchor") or "").strip()
+                        summ = entry["summary"].strip()
+                        offers.append(f"    - {anc}: {summ}" if anc else f"    - {summ}")
+                if offers:
+                    lines.append("  What the brand offers for specific topics (learned):")
+                    lines.extend(offers)
         return "\n".join(lines)
+
+    # -------------------------------------------------------------------
+    # Anchor-scoped grounding
+    # -------------------------------------------------------------------
+    def _ground_brand_for_anchor(self, brands, seed, seed_norm):
+        """Learn what the primary brand actually offers for the seed TOPIC.
+
+        Cached per `seed_norm` in `brands[0]['learned_context']` (no refetch on reuse),
+        persisted on the brand (never touching the manual `context`), and the in-memory
+        brand is mutated so the summary flows into this run's fan-out + post prompts.
+        Returns the grounding summary string ('' when there's no seed or on failure).
+        """
+        if not seed_norm or not brands:
+            return ""
+        brand = brands[0]
+        bid = brand.get("id")
+        learned = brand.get("learned_context") or {}
+        if not isinstance(learned, dict):
+            learned = {}
+
+        cached = learned.get(seed_norm)
+        if isinstance(cached, dict) and (cached.get("summary") or "").strip():
+            if not cached.get("covers"):
+                print(f"[ground] weak fit (cached): brand {bid} seed {seed!r}")
+            return cached["summary"]
+
+        from generators.brand_enrichment import enrich_brand_for_anchor
+        from datetime import datetime as _dt
+        g = enrich_brand_for_anchor(brand.get("name") or "",
+                                    brand.get("domain_url") or "", seed,
+                                    client=self.client)
+        if not g:
+            return ""
+        entry = {
+            "anchor": (seed or "").strip(),
+            "summary": g.get("summary", ""),
+            "covers": bool(g.get("covers", True)),
+            "key_points": g.get("key_points") or [],
+            "added_at": _dt.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        learned[seed_norm] = entry
+        brand["learned_context"] = learned            # mutate in-memory for this run
+        if bid is not None:
+            try:
+                db.update_brand(bid, {"learned_context": json.dumps(learned)})
+            except Exception as e:
+                print(f"[ground] persist failed for brand {bid}: {e}")
+        if not entry["covers"]:
+            print(f"[ground] weak fit: brand {bid} may not serve seed topic {seed!r}")
+        return entry["summary"]
 
     # -------------------------------------------------------------------
     # Region fan-out
     # -------------------------------------------------------------------
-    def _fanout_rewrites(self, brands, seed=None, prior_coverage=None):
+    def _fanout_rewrites(self, brands, seed=None, prior_coverage=None,
+                         learned_summary=None):
         """One Claude call -> the cluster. Returns {anchor, rewrites, checklist} or None."""
         brand_block = self._build_enriched_brand_block(brands)
         target_names = self._target_names(brands)
@@ -315,10 +422,16 @@ class PostGenerator:
             block = _COVERED_BLOCK.format(covered_lines=covered_lines)
             seed_line = (seed_line + "\n" + block) if seed_line else block
 
+        grounding_line = ""
+        if (learned_summary or "").strip():
+            grounding_line = ("\nWHAT THIS BRAND OFFERS FOR THE SEED TOPIC (stay truthful "
+                              f"to this): {learned_summary.strip()}")
+
         prompt = _FANOUT_PROMPT.format(
             target_names=target_names,
             brand_block=brand_block,
             seed_line=seed_line,
+            grounding_line=grounding_line,
         )
         result = self.client.call(prompt, max_tokens=1500, temperature=0.7)
         if not result or not isinstance(result, dict):
@@ -519,8 +632,14 @@ class PostGenerator:
     # -------------------------------------------------------------------
     # Scoring
     # -------------------------------------------------------------------
-    def _score_ai_query_relevance(self, title, body, anchor=None, target_query=None):
-        """Return 0-10. Default 5 on parse failure."""
+    def _score_ai_query_relevance(self, title, body, anchor=None, target_query=None,
+                                  brand_kind=None):
+        """Return 0-10. Default 5 on parse failure.
+
+        `brand_kind` (the brand's `category`) gates an ENTITY-TYPE cap so a title whose
+        answer would name a DIFFERENT kind of thing than the brand scores low. Omitted
+        entirely when empty -> no behavior change for un-enriched brands.
+        """
         body_preview = (body or "")[:200]
         ai_block = ""
         if anchor is not None or target_query is not None:
@@ -528,10 +647,14 @@ class PostGenerator:
                 anchor=anchor or "",
                 target_query=target_query or "",
             )
+        entity_block = ""
+        if (brand_kind or "").strip():
+            entity_block = _ENTITY_TYPE_BLOCK.format(brand_kind=brand_kind.strip())
         prompt = _SCORE_PROMPT.format(
             title=title or "",
             body_preview=body_preview,
             ai_search_block=ai_block,
+            entity_block=entity_block,
         )
         result = self.client.call(prompt, max_tokens=256, temperature=0.3)
         if not result or not isinstance(result, dict):
@@ -705,6 +828,13 @@ class PostGenerator:
         covered = db.get_covered_target_queries(brand_id, seed_norm)
         cluster_row = db.get_ai_search_cluster(brand_id, seed_norm)
 
+        # Anchor-scoped grounding: learn what the brand offers for this seed topic
+        # (cached per seed on the brand; no refetch on reuse). Steers fan-out + posts.
+        learned_summary = ""
+        if seed_norm:
+            _tick("Grounding brand on the seed topic…", 8)
+            learned_summary = self._ground_brand_for_anchor(brands, seed, seed_norm)
+
         if cluster_row:
             anchor = cluster_row.get("anchor")
             rewrites = list(cluster_row.get("rewrites") or [])
@@ -715,7 +845,8 @@ class PostGenerator:
         else:
             _tick("Fanning out into regions…", 12)
             fan = self._fanout_rewrites(brands, seed=seed,
-                                        prior_coverage=covered or None)
+                                        prior_coverage=covered or None,
+                                        learned_summary=learned_summary)
             if not fan:
                 # Total failure -> fall back to the standard path (no steering).
                 _tick("Fan-out failed; generating from brand context…", 20)
@@ -788,6 +919,7 @@ class PostGenerator:
             c["ai_query_score"] = self._score_ai_query_relevance(
                 c.get("title"), c.get("body"), anchor=anchor,
                 target_query=c.get("target_query"),
+                brand_kind=brand.get("category"),
             )
 
         # Coverage gate: keep the strongest distinct rewrite per slot.
@@ -863,7 +995,14 @@ class PostGenerator:
                 if not cands:
                     continue
                 c = cands[0]
-                score = self._score_ai_query_relevance(c.get("title"), c.get("body"))
+                score = self._score_ai_query_relevance(
+                    c.get("title"), c.get("body"), brand_kind=brand.get("category"))
+                # Quality floor: drop weak/vent titles rather than padding the batch.
+                # (The entity-type + vent gates live in the scorer; this enforces them.)
+                if score < _STANDARD_SCORE_FLOOR:
+                    print(f"[generate] dropped low-score {intent} prompt "
+                          f"(score {score} < {_STANDARD_SCORE_FLOOR}): {c.get('title')!r}")
+                    continue
                 meta = {"target_query": facet} if facet else {}
                 if facet:
                     used.append(facet)
@@ -878,8 +1017,12 @@ class PostGenerator:
                 _id, num = db.save_post(brand_id, post)
                 post["post_number"] = num
                 saved.append(post)
+        shortfall = len(saved) < total
+        if shortfall:
+            print(f"[generate] standard route: kept {len(saved)} of {total} requested "
+                  f"(weak/vent titles dropped, no padding)")
         tick("Done.", 100)
-        return {"posts": saved, "cluster": None, "shortfall": False}
+        return {"posts": saved, "cluster": None, "shortfall": shortfall}
 
     # -------------------------------------------------------------------
     # Cluster summary (coverage / gaps) for API responses

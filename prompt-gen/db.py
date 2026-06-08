@@ -109,6 +109,7 @@ def init_db():
             "competitors": "TEXT",
             "enriched_at": "TEXT",
             "icps": "TEXT",
+            "learned_context": "TEXT",
         }
         existing = {r["name"] for r in conn.execute("PRAGMA table_info(brands)")}
         for col, typ in brand_alter_cols.items():
@@ -127,6 +128,8 @@ def _brand_row_to_dict(row):
     for f in _BRAND_LIST_FIELDS:
         d[f] = _loads(d.get(f), [])
     d["icps"] = _loads(d.get("icps"), [])
+    # Anchor-scoped grounding accumulator: JSON object keyed by seed_norm.
+    d["learned_context"] = _loads(d.get("learned_context"), {})
     # Convenience: count of prompts for this brand (filled by callers when needed).
     return d
 
@@ -198,6 +201,10 @@ def update_brand(brand_id, data):
             _set(f, _dumps(data.get(f) or []))
     if "icps" in data:
         _set("icps", _dumps(data.get("icps") or []))
+    if "learned_context" in data:
+        # Stored verbatim as a JSON string; accept a dict too. Never touches `context`.
+        lc = data.get("learned_context")
+        _set("learned_context", lc if isinstance(lc, str) else json.dumps(lc or {}))
     _set("enriched_at", enriched_at)
 
     if not fields:

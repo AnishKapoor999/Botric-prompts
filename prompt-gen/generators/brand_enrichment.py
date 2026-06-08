@@ -155,6 +155,61 @@ def _normalize_icps(val):
     return out
 
 
+_ANCHOR_GROUND_PROMPT = """You are grounding a GEO campaign. We are about to build content anchored on a specific
+TOPIC for this brand, and need to know what THIS brand actually offers or does that is
+relevant to that topic — so the content stays truthful and on-target.
+
+BRAND NAME: {name}
+BRAND URL: {domain_url}
+ANCHOR TOPIC: "{anchor}"
+
+{page_section}
+
+Describe ONLY what is supported by the page above or your CONFIDENT knowledge of this
+brand — do NOT invent products, services, or claims. If the brand has no real offering
+relevant to "{anchor}", say so (covers=false): it's better to flag a poor fit than to
+fabricate.
+
+Return JSON only:
+{{"summary": "1-3 sentences: what this brand offers for \\"{anchor}\\" (or, if covers=false, a one-line note it doesn't serve this topic)", "covers": true, "key_points": ["...", "..."]}}"""
+
+
+def _ground_page_section(page_text):
+    if page_text:
+        return f'HOMEPAGE TEXT (visible content only):\n"""\n{page_text}\n"""'
+    return ("HOMEPAGE TEXT: (could not fetch — use your CONFIDENT knowledge of this brand "
+            "only; if you have none, set covers=false rather than inventing anything.)")
+
+
+def enrich_brand_for_anchor(name, domain_url, anchor, client=None):
+    """Learn what a brand actually offers for a specific anchor TOPIC.
+
+    Grounds on the brand's own site + confident knowledge — never the open web — so it
+    never invents offerings. Returns {summary, covers, key_points}, or {} on failure.
+    """
+    client = client or ClaudeClient()
+    html = _fetch_homepage(domain_url)
+    page_text = _extract_visible_text(html)
+
+    prompt = _ANCHOR_GROUND_PROMPT.format(
+        name=name or "(unknown)",
+        domain_url=domain_url or "(none)",
+        anchor=(anchor or "").strip() or "(general)",
+        page_section=_ground_page_section(page_text),
+    )
+    result = client.call(prompt, max_tokens=600, temperature=0.2)
+    if not result or not isinstance(result, dict):
+        return {}
+    summary = str(result.get("summary") or "").strip()
+    if not summary:
+        return {}
+    return {
+        "summary": summary,
+        "covers": bool(result.get("covers", True)),
+        "key_points": _trimmed_str_list(result.get("key_points")),
+    }
+
+
 def enrich_brand(name, domain_url, client=None):
     """Return an enrichment draft dict (never saves). Includes `_page_fetched`."""
     client = client or ClaudeClient()
