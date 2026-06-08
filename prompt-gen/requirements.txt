@@ -1,0 +1,7 @@
+flask
+anthropic
+requests
+# production WSGI server (used on Railway / any host)
+gunicorn
+# optional: load .env automatically
+python-dotenv

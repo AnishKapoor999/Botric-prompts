@@ -1,0 +1,13 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "prompt-gen",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["app.py"],
+      "cwd": "prompt-gen",
+      "autoPort": true,
+      "port": 5000
+    }
+  ]
+}

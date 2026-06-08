@@ -1,0 +1,862 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Botric — Prompt Generation</title>
+  <script>
+    // Set the theme before first paint to avoid a flash of the wrong mode.
+    (function(){
+      try {
+        var t = localStorage.getItem('botric-theme');
+        if (!t) t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { document.documentElement.setAttribute('data-theme', 'light'); }
+    })();
+  </script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=Libre+Baskerville:ital@0;1&display=swap" rel="stylesheet" />
+  <style>
+    /* ---- Light theme (Botric light) ---- */
+    :root {
+      --accent: #3F70EB;       /* botric-blue */
+      --accent-dark: #2D5AD1;  /* deep blue */
+      --accent-maroon: #1E3A8A;/* botric-navy-blue */
+      --accent-soft: #A6C5FF;  /* botric-light-blue */
+      --accent-tint: #E4EEFF;  /* soft blue wash */
+      --bg: #F5F8FF;           /* botric-mist */
+      --surface: #ffffff;
+      --border: #E2E8F4;       /* cool border */
+      --ghost-hover: #EEF3FC;
+      --text: #0A1224;         /* botric-navy */
+      --text-muted: #5A6478;   /* cool muted */
+      --input-bg: #ffffff;
+      --chip-good-bg: #E4EEFF; --chip-good-fg: #2D5AD1;
+      --chip-warn-bg: #FEF3E2; --chip-warn-fg: #B45309;
+      --chip-badge-bg: #0A1224; --chip-badge-fg: #F5F8FF;
+      --chip-neutral-bg: #EEF1F6; --chip-neutral-fg: #5A6478;
+      --toast-bg: #0A1224; --toast-fg: #F5F8FF;
+      --shadow: rgba(10,18,36,.10);
+      --overlay: rgba(10,18,36,.42);
+      --r-lg: 28px;
+      --r-md: 16px;
+      --r-sm: 10px;
+    }
+    /* ---- Dark theme (Botric navy, exact site tokens) ---- */
+    [data-theme="dark"] {
+      --accent: #5484FF;          /* brighter blue for contrast on dark */
+      --accent-dark: #3F70EB;
+      --accent-maroon: #7EA6FF;   /* light blue carries the accent on dark */
+      --accent-soft: #7EA6FF;
+      --accent-tint: rgba(84,132,255,.16);
+      --bg: #0A0F1A;              /* botric-near-black */
+      --surface: #121A2E;         /* botric-navy-surface */
+      --border: rgba(228,238,255,.12);
+      --ghost-hover: #1A2440;
+      --text: #E4EEFF;            /* botric-light */
+      --text-muted: rgba(228,238,255,.60);
+      --input-bg: #0E1626;
+      --chip-good-bg: rgba(84,132,255,.18); --chip-good-fg: #9DB8FF;
+      --chip-warn-bg: rgba(245,158,11,.16); --chip-warn-fg: #FBBF24;
+      --chip-badge-bg: #E4EEFF; --chip-badge-fg: #0A1224;
+      --chip-neutral-bg: rgba(228,238,255,.10); --chip-neutral-fg: rgba(228,238,255,.78);
+      --toast-bg: #E4EEFF; --toast-fg: #0A1224;
+      --shadow: rgba(0,0,0,.45);
+      --overlay: rgba(0,0,0,.62);
+    }
+    * { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+    h1, h2, h3, .display { font-family: 'Manrope', 'Inter', sans-serif; letter-spacing: -0.02em; }
+    body { background: var(--bg); color: var(--text); transition: background-color .22s ease, color .22s ease; }
+    body, .card, .btn-ghost, .input, .modal, .report-table td, .report-table th, .chip, header { transition: background-color .22s ease, color .22s ease, border-color .22s ease; }
+    input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); padding: 24px; }
+    .btn-primary { background: var(--accent); color: #fff; border-radius: 999px; padding: 9px 18px; font-weight: 700; font-size: 14px; font-family: 'Manrope', sans-serif; transition: background .15s, transform .05s; }
+    .btn-primary:hover { background: var(--accent-dark); }
+    .btn-primary:active { transform: translateY(1px); }
+    .btn-primary:disabled { opacity: .55; cursor: not-allowed; }
+    .btn-ghost { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 999px; padding: 9px 18px; font-weight: 700; font-size: 14px; font-family: 'Manrope', sans-serif; transition: background .15s, border-color .15s; }
+    .btn-ghost:hover { background: var(--ghost-hover); }
+    .btn-sm { padding: 6px 13px; font-size: 13px; }
+    .input { width: 100%; border: 1px solid var(--border); border-radius: var(--r-sm); padding: 9px 13px; font-size: 14px; background: var(--input-bg); color: var(--text); }
+    .input::placeholder { color: var(--text-muted); opacity: .8; }
+    .input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); }
+    label.fld { display:block; font-size:13px; font-weight:600; color: var(--text-muted); margin-bottom: 4px; }
+    .report-table { width: 100%; border-collapse: collapse; }
+    .report-table th { text-transform: uppercase; font-size: 12px; color: var(--text-muted); text-align: left; padding: 11px 12px; border-bottom: 1px solid var(--border); font-weight: 700; letter-spacing: .04em; font-family: 'Manrope', sans-serif; }
+    .report-table td { padding: 11px 12px; border-bottom: 1px solid var(--border); font-size: 14px; vertical-align: top; }
+    .report-table tr:hover td { background: var(--bg); }
+    .chip { display:inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; font-family: 'Manrope', sans-serif; }
+    .chip-live { background:var(--chip-good-bg); color:var(--chip-good-fg); }       /* covered / good */
+    .chip-removed { background:var(--chip-warn-bg); color:var(--chip-warn-fg); }    /* gap / warn */
+    .chip-brand { background:var(--chip-badge-bg); color:var(--chip-badge-fg); }    /* number badge */
+    .chip-sub { background:var(--chip-neutral-bg); color:var(--chip-neutral-fg); }  /* neutral */
+    .muted { color: var(--text-muted); }
+    .toast { position: fixed; bottom: 22px; right: 22px; background:var(--toast-bg); color:var(--toast-fg); padding: 13px 19px; border-radius: var(--r-sm); font-size:14px; box-shadow: 0 14px 38px var(--shadow); z-index: 60; max-width: 380px; font-weight: 500; }
+    .modal-bg { position: fixed; inset:0; background: var(--overlay); display:flex; align-items:flex-start; justify-content:center; padding: 40px 16px; overflow:auto; z-index: 50; }
+    .modal { background:var(--surface); border-radius:var(--r-lg); width: 100%; max-width: 860px; padding: 30px; box-shadow: 0 30px 70px var(--shadow); }
+    .spinner { width:16px; height:16px; border:2px solid #fff; border-top-color: transparent; border-radius:50%; display:inline-block; animation: spin .7s linear infinite; vertical-align: -2px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .progressbar { height: 8px; background: var(--accent-tint); border-radius: 999px; overflow:hidden; }
+    .progressbar > div { height: 100%; background: var(--accent); transition: width .3s; }
+    a.link { color: var(--accent); font-weight: 700; }
+    .nav-tab { padding: 9px 4px; font-weight: 700; font-size: 14px; color: var(--text-muted); border-bottom: 2px solid transparent; cursor: pointer; font-family: 'Manrope', sans-serif; }
+    .nav-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+    .serif { font-family: 'Libre Baskerville', Georgia, serif; }
+  </style>
+</head>
+<body>
+  <header class="border-b" style="border-color: var(--border); background: var(--bg);">
+    <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+      <div class="flex items-center gap-3 cursor-pointer" onclick="App.goBrands()">
+        <svg viewBox="0 0 1025 309" role="img" aria-label="Botric" style="height:30px;width:auto;display:block;color:var(--text);" xmlns="http://www.w3.org/2000/svg">
+          <path d="M349.897,277.639c-11.45,0 -21.533,-2.435 -30.248,-7.306c-8.716,-4.871 -15.551,-12.005 -20.507,-21.405c-4.956,-9.399 -7.69,-20.764 -8.203,-34.094l5.383,0l0,58.19l-28.198,0l0,-187.13l35.632,0l0,93.565l-9.485,14.612c0.684,-14.355 3.546,-26.318 8.587,-35.888c5.041,-9.57 11.834,-16.748 20.379,-21.533c8.545,-4.785 18.2,-7.178 28.967,-7.178c9.57,0 18.286,1.794 26.147,5.383c7.861,3.589 14.612,8.587 20.251,14.996c5.64,6.409 9.955,13.885 12.945,22.43c2.991,8.545 4.486,17.859 4.486,27.941l0,5.383c0,10.083 -1.538,19.482 -4.614,28.198c-3.076,8.716 -7.519,16.363 -13.33,22.943c-5.81,6.579 -12.774,11.706 -20.892,15.381c-8.118,3.674 -17.218,5.511 -27.3,5.511Zm-7.947,-29.992c7.69,0 14.398,-1.923 20.123,-5.768c5.725,-3.845 10.211,-9.1 13.458,-15.765c3.247,-6.665 4.871,-14.355 4.871,-23.071c0,-8.887 -1.624,-16.577 -4.871,-23.071c-3.247,-6.494 -7.733,-11.535 -13.458,-15.124c-5.725,-3.589 -12.433,-5.383 -20.123,-5.383c-7.007,0 -13.458,1.538 -19.354,4.614c-5.896,3.076 -10.681,7.605 -14.355,13.586c-3.674,5.981 -5.511,13.159 -5.511,21.533l0,10.254c0,8.032 1.88,14.868 5.64,20.507c3.76,5.64 8.63,9.997 14.612,13.073c5.981,3.076 12.304,4.614 18.969,4.614Z" style="fill:currentColor;fill-rule:nonzero;"/>
+          <path d="M509.086,277.895c-12.304,0 -23.156,-1.965 -32.555,-5.896c-9.399,-3.931 -17.346,-9.271 -23.84,-16.021c-6.494,-6.75 -11.407,-14.398 -14.74,-22.943c-3.332,-8.545 -4.999,-17.431 -4.999,-26.66l0,-5.383c0,-9.57 1.752,-18.67 5.255,-27.3c3.503,-8.63 8.545,-16.32 15.124,-23.071c6.579,-6.75 14.569,-12.048 23.968,-15.893c9.399,-3.845 19.995,-5.768 31.786,-5.768c11.792,0 22.387,1.923 31.786,5.768c9.399,3.845 17.389,9.143 23.968,15.893c6.579,6.75 11.578,14.441 14.996,23.071c3.418,8.63 5.127,17.73 5.127,27.3l0,5.383c0,9.228 -1.666,18.115 -4.999,26.66c-3.332,8.545 -8.246,16.192 -14.74,22.943c-6.494,6.75 -14.441,12.091 -23.84,16.021c-9.399,3.931 -20.166,5.896 -32.299,5.896Zm0,-30.505c8.716,0 16.064,-1.923 22.045,-5.768c5.981,-3.845 10.51,-9.057 13.586,-15.637c3.076,-6.579 4.614,-14.056 4.614,-22.43c0,-8.545 -1.581,-16.107 -4.742,-22.686c-3.162,-6.579 -7.776,-11.792 -13.842,-15.637c-6.067,-3.845 -13.287,-5.768 -21.661,-5.768c-8.374,0 -15.594,1.923 -21.661,5.768c-6.067,3.845 -10.724,9.057 -13.971,15.637c-3.247,6.579 -4.871,14.142 -4.871,22.686c0,8.374 1.581,15.85 4.742,22.43c3.162,6.579 7.733,11.792 13.714,15.637c5.981,3.845 13.33,5.768 22.045,5.768Z" style="fill:currentColor;fill-rule:nonzero;"/>
+          <path d="M671.607,274.819c-12.817,0 -23.37,-1.666 -31.658,-4.999c-8.288,-3.332 -14.483,-8.972 -18.585,-16.919c-4.101,-7.947 -6.152,-18.67 -6.152,-32.171l0.256,-126.12l33.324,0l-0.256,128.427c0,6.836 1.837,12.091 5.511,15.765c3.674,3.674 8.929,5.511 15.765,5.511l21.789,0l0,30.505l-19.995,0Zm-78.441,-114.841l0,-26.147l98.435,0l0,26.147l-98.435,0Z" style="fill:currentColor;fill-rule:nonzero;"/>
+          <path d="M716.467,273.025l0,-139.194l28.198,0l0,58.959l-0.769,0c0,-19.995 4.272,-35.119 12.817,-45.373c8.545,-10.254 21.106,-15.381 37.682,-15.381l5.127,0l0,31.017l-9.741,0c-11.963,0 -21.234,3.204 -27.813,9.613c-6.579,6.409 -9.869,15.68 -9.869,27.813l0,72.545l-35.632,0Z" style="fill:currentColor;fill-rule:nonzero;"/>
+          <path d="M824.899,273.025l0,-139.194l35.632,0l0,139.194l-35.632,0Zm-19.482,-112.534l0,-26.66l55.114,0l0,26.66l-55.114,0Zm32.555,-43.322c-7.007,0 -12.176,-1.837 -15.509,-5.511c-3.332,-3.674 -4.999,-8.331 -4.999,-13.971c0,-5.64 1.666,-10.254 4.999,-13.842c3.332,-3.589 8.502,-5.383 15.509,-5.383c7.007,0 12.134,1.794 15.381,5.383c3.247,3.589 4.871,8.203 4.871,13.842c0,5.64 -1.624,10.296 -4.871,13.971c-3.247,3.674 -8.374,5.511 -15.381,5.511Z" style="fill:currentColor;fill-rule:nonzero;"/>
+          <path d="M958.197,277.895c-12.134,0 -22.601,-2.051 -31.402,-6.152c-8.801,-4.101 -16.15,-9.57 -22.045,-16.406c-5.896,-6.836 -10.296,-14.526 -13.202,-23.071c-2.905,-8.545 -4.358,-17.26 -4.358,-26.147l0,-4.871c0,-9.399 1.495,-18.414 4.486,-27.044c2.991,-8.63 7.477,-16.32 13.458,-23.071c5.981,-6.75 13.373,-12.134 22.174,-16.15c8.801,-4.016 19.012,-6.024 30.633,-6.024c12.134,0 22.985,2.35 32.555,7.049c9.57,4.7 17.218,11.236 22.943,19.61c5.725,8.374 8.929,18.115 9.613,29.223l-34.606,0c-0.854,-7.178 -3.888,-13.159 -9.1,-17.944c-5.212,-4.785 -12.347,-7.178 -21.405,-7.178c-7.861,0 -14.398,1.88 -19.61,5.64c-5.212,3.76 -9.1,8.929 -11.664,15.509c-2.563,6.579 -3.845,14.142 -3.845,22.686c0,8.203 1.239,15.637 3.717,22.302c2.478,6.665 6.323,11.877 11.535,15.637c5.212,3.76 11.92,5.64 20.123,5.64c6.152,0 11.45,-1.111 15.893,-3.332c4.443,-2.222 7.989,-5.298 10.638,-9.228c2.649,-3.931 4.315,-8.374 4.999,-13.33l34.606,0c-0.684,11.279 -3.973,21.148 -9.869,29.608c-5.896,8.459 -13.672,15.081 -23.327,19.867c-9.656,4.785 -20.636,7.178 -32.94,7.178Z" style="fill:currentColor;fill-rule:nonzero;"/>
+          <path d="M5.251,43.818c4.777,-14.583 13.911,-15.87 28.545,-6.08c14.907,9.974 42.441,45.215 42.441,45.215l43.952,-0.3c40.959,-0.28 74.314,32.848 74.314,73.808l0,47.367c0,40.765 -33.045,73.81 -73.81,73.81l-46.547,0c-40.764,0 -73.811,-33.046 -73.811,-73.81l-0,-92.136c0,-18.996 0.14,-53.291 4.917,-67.874" style="fill:#2662d9;fill-rule:nonzero;"/>
+          <circle cx="97.417" cy="180.145" r="8.596"/>
+          <circle cx="122.24" cy="180.145" r="8.596"/>
+          <circle cx="72.595" cy="180.145" r="8.596"/>
+        </svg>
+        <div style="height:22px;width:1px;background:var(--border);"></div>
+        <div class="muted" style="font-size:13px;font-weight:600;">Prompt Generation</div>
+      </div>
+      <div class="flex items-center gap-2">
+        <button id="theme-toggle" class="btn-ghost btn-sm" title="Toggle light / dark" aria-label="Toggle dark mode" onclick="App.toggleTheme()"></button>
+        <button class="btn-ghost btn-sm" onclick="App.goBrands()">← All brands</button>
+      </div>
+    </div>
+  </header>
+
+  <main id="view" class="max-w-6xl mx-auto px-6 py-8"></main>
+
+  <div id="toast-root"></div>
+  <div id="modal-root"></div>
+
+<script>
+const api = {
+  async get(url) { const r = await fetch(url); return r.json(); },
+  async post(url, body) { const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body||{})}); return r.json(); },
+  async put(url, body) { const r = await fetch(url, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body||{})}); return r.json(); },
+};
+
+function el(html) { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstChild; }
+function esc(s) { return (s==null?'':String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function truncate(s, n) { s = s||''; return s.length>n ? s.slice(0,n)+'…' : s; }
+
+function toast(msg, ms=3200) {
+  const root = document.getElementById('toast-root');
+  const t = el(`<div class="toast">${esc(msg)}</div>`);
+  root.appendChild(t);
+  setTimeout(()=> t.remove(), ms);
+}
+
+function closeModal() { document.getElementById('modal-root').innerHTML = ''; }
+function showModal(node) {
+  const root = document.getElementById('modal-root');
+  const bg = el('<div class="modal-bg"></div>');
+  bg.addEventListener('click', e => { if (e.target === bg) closeModal(); });
+  const m = el('<div class="modal"></div>');
+  m.appendChild(node);
+  bg.appendChild(m);
+  root.innerHTML = '';
+  root.appendChild(bg);
+}
+
+const App = {
+  brands: [],
+  current: null,        // current brand detail
+  detailTab: 'generate',
+
+  async init() { this.applyThemeIcon(); await this.goBrands(); },
+
+  // ---------------- Theme ----------------
+  toggleTheme() {
+    const cur = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+    const next = cur === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('botric-theme', next); } catch (e) {}
+    this.applyThemeIcon();
+  },
+  applyThemeIcon() {
+    const btn = document.getElementById('theme-toggle');
+    if (!btn) return;
+    const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+    btn.textContent = dark ? '☀ Light' : '☾ Dark';
+  },
+
+  // ---------------- Brands grid ----------------
+  async goBrands() {
+    this.current = null;
+    const data = await api.get('/api/brands');
+    this.brands = data.brands || [];
+    this.renderBrands();
+  },
+
+  renderBrands() {
+    const v = document.getElementById('view');
+    v.innerHTML = '';
+    v.appendChild(el(`<div class="flex items-center justify-between mb-6">
+        <h1 style="font-size:22px;font-weight:700;">Brands</h1>
+        <button class="btn-primary" id="add-brand-btn">+ Add brand</button>
+      </div>`));
+    const grid = el('<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>');
+    if (!this.brands.length) {
+      grid.appendChild(el(`<div class="card muted">No brands yet. Click <b>+ Add brand</b> to start.</div>`));
+    }
+    for (const b of this.brands) {
+      const card = el(`<div class="card cursor-pointer hover:shadow-md transition" style="transition:box-shadow .15s;">
+          <div class="flex items-start justify-between">
+            <div style="font-weight:700;font-size:16px;">${esc(b.name)}</div>
+            ${b.enriched_at ? '<span class="chip chip-live">enriched ✓</span>' : '<span class="chip chip-sub">draft</span>'}
+          </div>
+          <div class="muted mt-1" style="font-size:13px;min-height:18px;">${esc(b.category||'—')}</div>
+          <div class="mt-4 flex items-center justify-between">
+            <span class="chip chip-brand">${b.prompt_count||0} prompts</span>
+            <span class="link" style="font-size:13px;">Open →</span>
+          </div>
+        </div>`);
+      card.addEventListener('click', ()=> this.openBrand(b.id));
+      grid.appendChild(card);
+    }
+    v.appendChild(grid);
+    document.getElementById('add-brand-btn').addEventListener('click', ()=> this.openBrandForm(null));
+  },
+
+  // ---------------- Brand form (add/edit) ----------------
+  openBrandForm(brand) {
+    const b = brand || {};
+    const icps = (b.icps||[]);
+    const listVal = a => (a||[]).join('\n');
+    const node = el(`<div>
+      <div class="flex items-center justify-between mb-4">
+        <h2 style="font-size:20px;font-weight:700;">${brand ? 'Edit brand' : 'Add brand'}</h2>
+        <button class="btn-ghost btn-sm" id="bf-close">Close</button>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+        <div>
+          <label class="fld">Website URL</label>
+          <div class="flex gap-2">
+            <input class="input" id="bf-url" value="${esc(b.domain_url||'')}" placeholder="example.com" />
+            <button class="btn-primary whitespace-nowrap" id="bf-enrich">✨ Enrich</button>
+          </div>
+          <div id="bf-fetch-note" class="muted" style="font-size:12px;margin-top:4px;"></div>
+        </div>
+        <div>
+          <label class="fld">Brand name</label>
+          <input class="input" id="bf-name" value="${esc(b.name||'')}" placeholder="Acme" />
+        </div>
+      </div>
+
+      <div class="mb-4">
+        <label class="fld">Context (3–5 sentences)</label>
+        <textarea class="input" id="bf-context" rows="3">${esc(b.context||'')}</textarea>
+      </div>
+
+      <div class="mb-4">
+        <label class="fld">Keywords (one per line or comma-separated)</label>
+        <textarea class="input" id="bf-keywords" rows="2">${esc(listVal(b.keywords))}</textarea>
+      </div>
+
+      <details class="mb-4" open>
+        <summary style="cursor:pointer;font-weight:600;font-size:14px;color:var(--text-muted);">GEO fields</summary>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-3">
+          <div><label class="fld">Category</label><input class="input" id="bf-category" value="${esc(b.category||'')}" /></div>
+          <div><label class="fld">Audience (legacy ICP sentence)</label><input class="input" id="bf-audience" value="${esc(b.audience||'')}" /></div>
+          <div><label class="fld">Use cases</label><textarea class="input" id="bf-use_cases" rows="3">${esc(listVal(b.use_cases))}</textarea></div>
+          <div><label class="fld">Pain points</label><textarea class="input" id="bf-pain_points" rows="3">${esc(listVal(b.pain_points))}</textarea></div>
+          <div><label class="fld">Features</label><textarea class="input" id="bf-features" rows="3">${esc(listVal(b.features))}</textarea></div>
+          <div><label class="fld">Competitors</label><textarea class="input" id="bf-competitors" rows="3">${esc(listVal(b.competitors))}</textarea></div>
+          <div class="sm:col-span-2"><label class="fld">Target subreddits (optional flavor)</label><input class="input" id="bf-target_subreddits" value="${esc((b.target_subreddits||[]).join(', '))}" /></div>
+        </div>
+      </details>
+
+      <div class="mb-4">
+        <div class="flex items-center justify-between mb-2">
+          <label class="fld" style="margin:0;">ICPs (ideal customer profiles)</label>
+          <button class="btn-ghost btn-sm" id="bf-add-icp">+ Add ICP</button>
+        </div>
+        <div id="bf-icps"></div>
+      </div>
+
+      <div class="flex justify-end gap-2">
+        <button class="btn-ghost" id="bf-cancel">Cancel</button>
+        <button class="btn-primary" id="bf-save">${brand ? 'Save changes' : 'Save brand'}</button>
+      </div>
+    </div>`);
+
+    showModal(node);
+    const root = node;
+    const icpWrap = root.querySelector('#bf-icps');
+
+    function icpRow(icp) {
+      icp = icp || {};
+      const row = el(`<div class="card" style="padding:14px;margin-bottom:10px;">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div><label class="fld">Label</label><input class="input icp-label" value="${esc(icp.label||'')}" placeholder="solo podcaster" /></div>
+          <div><label class="fld">Role</label><input class="input icp-role" value="${esc(icp.role||'')}" /></div>
+          <div><label class="fld">Segment</label><input class="input icp-segment" value="${esc(icp.segment||'')}" /></div>
+          <div><label class="fld">Context</label><input class="input icp-context" value="${esc(icp.context||'')}" /></div>
+          <div class="sm:col-span-2"><label class="fld">Pains (comma-separated)</label><input class="input icp-pains" value="${esc((icp.pains||[]).join(', '))}" /></div>
+        </div>
+        <div class="flex justify-end mt-2"><button class="btn-ghost btn-sm icp-del">Remove</button></div>
+      </div>`);
+      row.querySelector('.icp-del').addEventListener('click', ()=> row.remove());
+      return row;
+    }
+    icps.forEach(i => icpWrap.appendChild(icpRow(i)));
+    root.querySelector('#bf-add-icp').addEventListener('click', ()=> icpWrap.appendChild(icpRow({})));
+
+    function collectIcps() {
+      return Array.from(icpWrap.querySelectorAll('.card')).map(r => ({
+        label: r.querySelector('.icp-label').value.trim(),
+        role: r.querySelector('.icp-role').value.trim(),
+        segment: r.querySelector('.icp-segment').value.trim(),
+        context: r.querySelector('.icp-context').value.trim(),
+        pains: r.querySelector('.icp-pains').value.split(',').map(s=>s.trim()).filter(Boolean),
+      })).filter(i => i.label||i.role||i.segment||i.context||i.pains.length);
+    }
+
+    function gather() {
+      return {
+        name: root.querySelector('#bf-name').value.trim(),
+        domain_url: root.querySelector('#bf-url').value.trim(),
+        context: root.querySelector('#bf-context').value.trim(),
+        keywords: root.querySelector('#bf-keywords').value,
+        category: root.querySelector('#bf-category').value.trim(),
+        audience: root.querySelector('#bf-audience').value.trim(),
+        use_cases: root.querySelector('#bf-use_cases').value,
+        pain_points: root.querySelector('#bf-pain_points').value,
+        features: root.querySelector('#bf-features').value,
+        competitors: root.querySelector('#bf-competitors').value,
+        target_subreddits: root.querySelector('#bf-target_subreddits').value,
+        icps: collectIcps(),
+      };
+    }
+
+    root.querySelector('#bf-close').addEventListener('click', closeModal);
+    root.querySelector('#bf-cancel').addEventListener('click', closeModal);
+
+    root.querySelector('#bf-enrich').addEventListener('click', async (e) => {
+      const btn = e.target;
+      const name = root.querySelector('#bf-name').value.trim();
+      const url = root.querySelector('#bf-url').value.trim();
+      if (!name && !url) { toast('Enter a URL or name first'); return; }
+      btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
+      try {
+        const res = await api.post('/api/brands/enrich', {name, domain_url: url});
+        if (res.error) { toast(res.error); return; }
+        const d = res.draft || {};
+        if (d._ai_available === false) {
+          const note = root.querySelector('#bf-fetch-note');
+          note.textContent = '⚠ No ANTHROPIC_API_KEY set on the server — Claude can\'t fill the fields. Set the key and restart, then Enrich again.';
+          note.style.color = 'var(--accent-maroon)';
+          toast('No ANTHROPIC_API_KEY set — enrichment returned nothing');
+          return;
+        }
+        const set = (id, val) => { const e2 = root.querySelector(id); if (e2 != null) e2.value = val; };
+        // Fill the brand name only if the user hasn't typed one.
+        const nameEl = root.querySelector('#bf-name');
+        if (nameEl && !nameEl.value.trim() && d.name) nameEl.value = d.name;
+        if ((d.keywords||[]).length) set('#bf-keywords', (d.keywords||[]).join('\n'));
+        if (d.category) set('#bf-category', d.category);
+        if (d.audience) set('#bf-audience', d.audience);
+        set('#bf-use_cases', (d.use_cases||[]).join('\n'));
+        set('#bf-pain_points', (d.pain_points||[]).join('\n'));
+        set('#bf-features', (d.features||[]).join('\n'));
+        set('#bf-competitors', (d.competitors||[]).join('\n'));
+        // Only overwrite context if empty.
+        const ctxEl = root.querySelector('#bf-context');
+        if (!ctxEl.value.trim() && d.context) ctxEl.value = d.context;
+        // Replace ICP rows.
+        icpWrap.innerHTML = '';
+        (d.icps||[]).forEach(i => icpWrap.appendChild(icpRow(i)));
+        const note = root.querySelector('#bf-fetch-note');
+        if (d._page_fetched) { note.textContent = 'Homepage fetched ✓'; note.style.color = 'var(--accent-dark)'; toast('Enriched from homepage'); }
+        else { note.textContent = '⚠ Could not fetch homepage — used brand name + general knowledge'; note.style.color = 'var(--accent-maroon)'; toast('Could not fetch homepage; used general knowledge'); }
+      } finally {
+        btn.disabled = false; btn.innerHTML = '✨ Enrich';
+      }
+    });
+
+    root.querySelector('#bf-save').addEventListener('click', async (e) => {
+      const body = gather();
+      if (!body.name) { toast('Brand name is required'); return; }
+      if (!body.context) { toast('Context is required'); return; }
+      e.target.disabled = true;
+      let res;
+      if (brand) res = await api.put('/api/brands/' + brand.id, body);
+      else res = await api.post('/api/brands', body);
+      e.target.disabled = false;
+      if (res.error) { toast(res.error); return; }
+      closeModal();
+      toast(brand ? 'Brand updated' : 'Brand created');
+      if (brand) await this.openBrand(brand.id);
+      else await this.goBrands();
+    });
+  },
+
+  // ---------------- Brand detail ----------------
+  async openBrand(id) {
+    const data = await api.get('/api/brands/' + id);
+    if (data.error) { toast(data.error); return; }
+    this.current = data.brand;
+    this.detailTab = this.detailTab || 'generate';
+    this.renderBrandDetail();
+  },
+
+  renderBrandDetail() {
+    const b = this.current;
+    const v = document.getElementById('view');
+    v.innerHTML = '';
+    const head = el(`<div class="mb-6">
+      <div class="flex items-start justify-between">
+        <div>
+          <div class="flex items-center gap-3">
+            <h1 style="font-size:24px;font-weight:700;">${esc(b.name)}</h1>
+            ${b.enriched_at ? '<span class="chip chip-live">enriched ✓</span>' : '<span class="chip chip-sub">draft</span>'}
+          </div>
+          <div class="muted mt-1" style="font-size:14px;">${esc(b.category||'—')}${b.domain_url? ' · '+esc(b.domain_url):''}</div>
+        </div>
+        <div class="flex gap-2">
+          <button class="btn-ghost btn-sm" id="bd-edit">Edit</button>
+          <button class="btn-ghost btn-sm" id="bd-enrich">✨ Re-enrich</button>
+        </div>
+      </div>
+      <p class="mt-3" style="font-size:14px;max-width:760px;">${esc(b.context||'')}</p>
+    </div>`);
+    v.appendChild(head);
+
+    const tabs = el(`<div class="flex gap-6 border-b mb-6" style="border-color:var(--border);">
+        <div class="nav-tab" data-tab="generate">Generate</div>
+        <div class="nav-tab" data-tab="clusters">Clusters</div>
+        <div class="nav-tab" data-tab="prompts">Prompts</div>
+        <div class="nav-tab" data-tab="icps">ICPs</div>
+      </div>`);
+    v.appendChild(tabs);
+    const panel = el('<div id="bd-panel"></div>');
+    v.appendChild(panel);
+
+    tabs.querySelectorAll('.nav-tab').forEach(t => {
+      if (t.dataset.tab === this.detailTab) t.classList.add('active');
+      t.addEventListener('click', ()=> { this.detailTab = t.dataset.tab; this.renderBrandDetail(); });
+    });
+
+    head.querySelector('#bd-edit').addEventListener('click', ()=> this.openBrandForm(b));
+    head.querySelector('#bd-enrich').addEventListener('click', async (e)=> {
+      e.target.disabled = true; e.target.innerHTML = '<span class="spinner"></span>';
+      const res = await api.post('/api/brands/'+b.id+'/enrich', {});
+      e.target.disabled = false; e.target.innerHTML = '✨ Re-enrich';
+      if (res.error) { toast(res.error); return; }
+      // Open the edit form pre-filled with the new draft merged onto the brand.
+      const merged = Object.assign({}, b);
+      const d = res.draft||{};
+      ['category','audience'].forEach(k=>{ if(d[k]) merged[k]=d[k]; });
+      ['use_cases','pain_points','features','competitors','icps'].forEach(k=>{ if(d[k]&&d[k].length) merged[k]=d[k]; });
+      if (!merged.context && d.context) merged.context = d.context;
+      toast(d._page_fetched ? 'Re-enriched from homepage' : 'Re-enriched (no homepage)');
+      this.openBrandForm(merged);
+    });
+
+    if (this.detailTab === 'generate') this.renderGeneratePanel(panel);
+    else if (this.detailTab === 'clusters') this.renderClustersPanel(panel);
+    else if (this.detailTab === 'prompts') this.renderPromptsPanel(panel);
+    else if (this.detailTab === 'icps') this.renderIcpsPanel(panel);
+  },
+
+  renderIcpsPanel(panel) {
+    const b = this.current;
+    const icps = b.icps||[];
+    panel.innerHTML = '';
+    if (!icps.length) { panel.appendChild(el('<div class="card muted">No ICPs yet. Use Edit → ICP editor, or ✨ Re-enrich to detect them.</div>')); return; }
+    const grid = el('<div class="grid grid-cols-1 sm:grid-cols-2 gap-4"></div>');
+    icps.forEach(i => grid.appendChild(el(`<div class="card">
+        <div style="font-weight:700;">${esc(i.label||'(unnamed)')}</div>
+        <div class="muted" style="font-size:13px;margin-top:2px;">${esc(i.role||'')}${i.segment? ' · '+esc(i.segment):''}</div>
+        ${i.context? `<p style="font-size:13px;margin-top:8px;">${esc(i.context)}</p>`:''}
+        ${(i.pains||[]).length? `<div class="mt-2">${i.pains.map(p=>`<span class="chip chip-removed" style="margin:2px;">${esc(p)}</span>`).join('')}</div>`:''}
+      </div>`)));
+    panel.appendChild(grid);
+  },
+
+  // ---------------- Generate panel ----------------
+  renderGeneratePanel(panel) {
+    const b = this.current;
+    panel.innerHTML = '';
+    const card = el(`<div class="card">
+      <h3 style="font-weight:700;font-size:16px;margin-bottom:14px;">Generate prompts</h3>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div class="sm:col-span-2">
+          <label class="fld">Seed (optional — a prompt/question, several, or just a platform/keyword)</label>
+          <textarea class="input" id="g-seed" rows="2" placeholder="e.g. any good background music tools for Instagram Reels?  (leave blank to derive from the brand)"></textarea>
+        </div>
+        <div>
+          <label class="fld">Intent split (per-intent counts)</label>
+          <div class="grid grid-cols-3 gap-2">
+            <div><div class="muted" style="font-size:12px;">commercial</div><input type="number" min="0" value="1" class="input" id="g-commercial" /></div>
+            <div><div class="muted" style="font-size:12px;">comparison</div><input type="number" min="0" value="1" class="input" id="g-comparison" /></div>
+            <div><div class="muted" style="font-size:12px;">informational</div><input type="number" min="0" value="1" class="input" id="g-informational" /></div>
+          </div>
+        </div>
+        <div>
+          <label class="fld">Mode</label>
+          <label style="display:flex;align-items:center;gap:8px;font-size:14px;margin-top:6px;">
+            <input type="checkbox" id="g-aisearch" checked /> AI-Search (fan-out → cluster → generate)
+          </label>
+          <div class="muted" style="font-size:12px;margin-top:6px;">Re-running the same seed reuses its cluster and fills gaps.</div>
+        </div>
+        <div class="sm:col-span-2">
+          <details>
+            <summary style="cursor:pointer;font-weight:600;font-size:13px;color:var(--text-muted);">Paste observed queries (optional)</summary>
+            <textarea class="input mt-2" id="g-observed" rows="3" placeholder="Real fan-out sub-queries you saw ChatGPT/Gemini emit — one per line"></textarea>
+          </details>
+        </div>
+      </div>
+      <div class="flex items-center gap-3 mt-5">
+        <button class="btn-primary" id="g-run">Generate</button>
+        <div id="g-status" class="muted" style="font-size:13px;flex:1;"></div>
+      </div>
+      <div id="g-progress" class="progressbar mt-3" style="display:none;"><div style="width:0%"></div></div>
+    </div>`);
+    panel.appendChild(card);
+    const out = el('<div id="g-out" class="mt-6"></div>');
+    panel.appendChild(out);
+
+    card.querySelector('#g-run').addEventListener('click', ()=> {
+      const intent_counts = {
+        commercial: parseInt(card.querySelector('#g-commercial').value||'0',10),
+        comparison: parseInt(card.querySelector('#g-comparison').value||'0',10),
+        informational: parseInt(card.querySelector('#g-informational').value||'0',10),
+      };
+      if (!Object.values(intent_counts).some(n=>n>0)) { toast('Set at least one intent count'); return; }
+      const observed = card.querySelector('#g-observed').value.split('\n').map(s=>s.trim()).filter(Boolean);
+      this.runGeneration({
+        brand_id: b.id,
+        seed: card.querySelector('#g-seed').value.trim() || null,
+        ai_search: card.querySelector('#g-aisearch').checked,
+        intent_counts,
+        observed_queries: observed.length ? observed : null,
+      }, card, out);
+    });
+  },
+
+  async runGeneration(body, card, out) {
+    const btn = card.querySelector('#g-run');
+    const status = card.querySelector('#g-status');
+    const bar = card.querySelector('#g-progress');
+    const fill = bar.querySelector('div');
+    btn.disabled = true; bar.style.display = 'block';
+    status.textContent = 'Starting…';
+    const res = await api.post('/api/prompts/generate', body);
+    if (res.error) { toast(res.error); btn.disabled=false; bar.style.display='none'; return; }
+    const taskId = res.task_id;
+    const poll = async () => {
+      const t = await api.get('/api/tasks/'+taskId);
+      status.textContent = t.message || t.status;
+      fill.style.width = (t.progress||0) + '%';
+      if (t.status === 'done') {
+        btn.disabled = false; bar.style.display='none';
+        this.renderGenerationResult(out, t.result);
+        // refresh brand counts
+        const bd = await api.get('/api/brands/'+body.brand_id); this.current = bd.brand;
+        return;
+      }
+      if (t.status === 'error') {
+        btn.disabled = false; bar.style.display='none';
+        toast('Generation error: ' + (t.error||'unknown')); return;
+      }
+      setTimeout(poll, 1200);
+    };
+    poll();
+  },
+
+  renderGenerationResult(out, result) {
+    out.innerHTML = '';
+    const posts = (result && result.posts) || [];
+    const head = el(`<div class="flex items-center justify-between mb-3">
+      <h3 style="font-weight:700;font-size:16px;">Generated ${posts.length} prompt${posts.length===1?'':'s'}</h3>
+      ${result && result.shortfall ? '<span class="chip chip-removed">coverage shortfall — fewer distinct strong prompts than requested</span>':''}
+    </div>`);
+    out.appendChild(head);
+    if (!posts.length) { out.appendChild(el('<div class="card muted">No prompts passed the gates. Try again or adjust the seed.</div>')); return; }
+    posts.forEach(p => out.appendChild(this.promptCard(p)));
+    if (result.cluster) {
+      const c = result.cluster;
+      out.appendChild(el(`<div class="muted mt-3" style="font-size:13px;">Cluster coverage: <b>${c.covered_count}/${c.cluster_size}</b> regions covered${c.gap_count? ' · '+c.gap_count+' gap(s) remaining':''}. See the <b>Clusters</b> tab.</div>`));
+    }
+  },
+
+  promptCard(p) {
+    const card = el(`<div class="card mb-3" style="cursor:pointer;" title="Click to view full prompt">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="chip chip-brand">#${p.post_number||'?'}</span>
+        <span class="chip chip-sub">${esc(p.intent||'')}</span>
+        ${p.ai_search_meta&&p.ai_search_meta.region? `<span class="chip chip-sub">${esc(p.ai_search_meta.region)}</span>`:''}
+        <span class="chip chip-live">score ${p.ai_query_score||0}</span>
+      </div>
+      <div style="font-weight:700;">${esc(p.title)}</div>
+      <p style="font-size:14px;margin-top:6px;white-space:pre-wrap;">${esc(truncate(p.body||'',260))}</p>
+      ${p.ai_search_meta&&p.ai_search_meta.target_query? `<div class="muted mt-2" style="font-size:12px;">target: ${esc(p.ai_search_meta.target_query)}</div>`:''}
+    </div>`);
+    card.addEventListener('click', ()=> this.openPromptModal(p));
+    return card;
+  },
+
+  // ---------------- Prompt detail modal ----------------
+  openPromptModal(p) {
+    const meta = p.ai_search_meta || {};
+    const brandId = p.brand_id || (this.current && this.current.id);
+    const node = el(`<div>
+      <div class="flex items-start justify-between mb-3">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="chip chip-brand">#${p.post_number||'?'}</span>
+          <span class="chip chip-sub">${esc(p.intent||'')}</span>
+          ${meta.region? `<span class="chip chip-sub">${esc(meta.region)}</span>`:''}
+          <span class="chip ${ (p.ai_query_score||0)>=6?'chip-live':'chip-removed'}">score ${p.ai_query_score||0}</span>
+        </div>
+        <button class="btn-ghost btn-sm" id="pm-close">Close</button>
+      </div>
+      <h2 style="font-size:21px;font-weight:700;line-height:1.3;">${esc(p.title)}</h2>
+      <p style="font-size:15px;margin-top:14px;white-space:pre-wrap;line-height:1.65;">${esc(p.body)}</p>
+      ${(meta.seed||meta.anchor||meta.target_query)? `<div class="card mt-4" style="background:var(--bg);padding:14px;">
+        ${meta.seed? `<div style="font-size:13px;margin-bottom:3px;"><b>Seed:</b> ${esc(meta.seed)}</div>`:''}
+        ${meta.anchor? `<div style="font-size:13px;margin-bottom:3px;"><b>Anchor:</b> ${esc(meta.anchor)}</div>`:''}
+        ${meta.target_query? `<div style="font-size:13px;"><b>Target query:</b> ${esc(meta.target_query)}</div>`:''}
+      </div>`:''}
+      <div class="flex justify-between items-center mt-5">
+        <button class="btn-ghost" id="pm-delete" style="color:var(--accent-maroon);border-color:var(--accent-maroon);">🗑 Delete prompt</button>
+        <button class="btn-primary" id="pm-copy">Copy title + body</button>
+      </div>
+    </div>`);
+    showModal(node);
+    node.querySelector('#pm-close').addEventListener('click', closeModal);
+    node.querySelector('#pm-copy').addEventListener('click', ()=> {
+      const text = (p.title||'') + '\n\n' + (p.body||'');
+      if (navigator.clipboard) navigator.clipboard.writeText(text);
+      toast('Copied to clipboard');
+    });
+    node.querySelector('#pm-delete').addEventListener('click', async ()=> {
+      if (!confirm('Delete prompt #' + (p.post_number||'?') + '? This cannot be undone.')) return;
+      const r = await api.post('/api/prompts/delete', {brand_id: brandId, post_number: p.post_number});
+      closeModal();
+      if (r.deleted) {
+        toast('Prompt deleted');
+        if (this.current && this.current.id === brandId) {
+          const bd = await api.get('/api/brands/' + brandId); this.current = bd.brand;
+          this.renderBrandDetail();
+        }
+      } else { toast('Could not delete prompt'); }
+    });
+  },
+
+  // ---------------- Clusters panel ----------------
+  async renderClustersPanel(panel) {
+    const b = this.current;
+    panel.innerHTML = '<div class="muted">Loading clusters…</div>';
+    const data = await api.get('/api/clusters?brand_id=' + b.id);
+    const clusters = data.clusters || [];
+    panel.innerHTML = '';
+    const bar = el(`<div class="flex items-center justify-between mb-4">
+      <div class="muted" style="font-size:13px;">${clusters.length} cluster${clusters.length===1?'':'s'}</div>
+      <button class="btn-ghost btn-sm" id="cl-backfill">Backfill from prompts</button>
+    </div>`);
+    panel.appendChild(bar);
+    bar.querySelector('#cl-backfill').addEventListener('click', async ()=> {
+      const r = await api.post('/api/clusters/backfill', {brand_id: b.id});
+      toast('Reconstructed ' + (r.created||0) + ' cluster(s)');
+      this.renderClustersPanel(panel);
+    });
+
+    if (!clusters.length) { panel.appendChild(el('<div class="card muted">No clusters yet. Generate prompts (AI-Search on) to build one.</div>')); return; }
+    clusters.forEach(c => panel.appendChild(this.clusterCard(c, panel)));
+  },
+
+  clusterCard(c, panel) {
+    const srcMark = s => s==='fixed' ? '★' : (s==='manual' ? '✎' : '⚙');
+    const card = el(`<div class="card mb-4">
+      <div class="flex items-start justify-between">
+        <div>
+          <div style="font-weight:700;font-size:16px;">${esc(c.anchor||'(anchor)')}</div>
+          <div class="muted" style="font-size:13px;">seed: ${esc(c.seed||'(default)')}</div>
+        </div>
+        <div class="text-right">
+          <div style="font-weight:700;font-size:18px;color:${c.complete?'var(--accent-dark)':'var(--text)'}">${c.covered_count}/${c.cluster_size}</div>
+          <div class="muted" style="font-size:12px;">covered${c.backfilled?' · backfilled':''}</div>
+        </div>
+      </div>
+      <table class="report-table mt-3">
+        <thead><tr><th style="width:28px;"></th><th>Region</th><th>Sub-query</th><th>Status</th><th>Prompts</th></tr></thead>
+        <tbody>
+        ${c.rewrites.map((r,i)=>`<tr>
+          <td><input type="checkbox" class="cl-row" data-q="${esc(r.query)}" /></td>
+          <td>${esc(r.region)} <span class="muted">${srcMark(r.source)}</span></td>
+          <td>${esc(r.query)}</td>
+          <td>${r.covered? '<span class="chip chip-live">covered</span>':'<span class="chip chip-removed">gap</span>'}</td>
+          <td>${(r.post_numbers||[]).map(n=>'#'+n).join(' ')||'—'}</td>
+        </tr>`).join('')}
+        </tbody>
+      </table>
+      <div class="flex flex-wrap gap-2 mt-3">
+        <button class="btn-primary btn-sm" data-act="fill">Fill gaps</button>
+        <button class="btn-ghost btn-sm" data-act="selected">Generate for selected (<span class="cl-count">0</span>)</button>
+        <button class="btn-ghost btn-sm" data-act="observed">Add observed queries</button>
+        <button class="btn-ghost btn-sm" data-act="addposts">Add prompts by #</button>
+        <button class="btn-ghost btn-sm" data-act="delete" style="color:var(--accent-maroon);">Delete cluster</button>
+      </div>
+      <div class="cl-result mt-3"></div>
+    </div>`);
+
+    const checks = card.querySelectorAll('.cl-row');
+    const countEl = card.querySelector('.cl-count');
+    const updateCount = ()=> { countEl.textContent = Array.from(checks).filter(c=>c.checked).length; };
+    checks.forEach(ch => ch.addEventListener('change', updateCount));
+
+    const selected = ()=> Array.from(checks).filter(c=>c.checked).map(c=>c.dataset.q);
+    const resultBox = card.querySelector('.cl-result');
+
+    card.querySelectorAll('[data-act]').forEach(btn => {
+      btn.addEventListener('click', async ()=> {
+        const act = btn.dataset.act;
+        if (act === 'delete') {
+          if (!confirm('Delete this cluster?')) return;
+          // Offer to also delete the prompts generated under this cluster.
+          let delPosts = false;
+          if (c.covered_count > 0) {
+            delPosts = confirm('Also delete the ' + c.covered_count + ' generated prompt(s) in this cluster?\n\nOK = delete prompts too · Cancel = keep prompts');
+          }
+          const r = await api.post('/api/clusters/delete', {brand_id: c.brand_id, seed: c.seed, delete_posts: delPosts});
+          toast('Cluster deleted' + (r.deleted_posts ? ' · ' + r.deleted_posts + ' prompt(s) removed' : ''));
+          const bd = await api.get('/api/brands/' + c.brand_id); this.current = bd.brand;
+          this.renderClustersPanel(panel); return;
+        }
+        if (act === 'observed') {
+          const q = prompt('Paste observed sub-queries (one per line):');
+          if (!q) return;
+          const observed = q.split('\n').map(s=>s.trim()).filter(Boolean);
+          const r = await api.post('/api/clusters/add-fanout', {brand_id:c.brand_id, seed:c.seed, observed_queries:observed});
+          if (r.error) { toast(r.error); return; }
+          toast(`Added ${ (r.added||[]).length }, skipped ${ (r.skipped||[]).length }`);
+          this.renderClustersPanel(panel); return;
+        }
+        if (act === 'addposts') {
+          const q = prompt('Prompt numbers to attach (comma-separated, e.g. 1,4,7):');
+          if (!q) return;
+          const nums = q.split(',').map(s=>parseInt(s.trim(),10)).filter(n=>!isNaN(n));
+          const r = await api.post('/api/clusters/add-posts', {brand_id:c.brand_id, seed:c.seed, post_numbers:nums});
+          if (r.error) { toast(r.error); return; }
+          toast(`Attached ${ (r.attached||[]).length } prompt(s)`);
+          this.renderClustersPanel(panel); return;
+        }
+        // fill / selected -> generation targeting specific rewrites or gaps
+        const target_rewrites = act === 'selected' ? selected() : c.rewrites.filter(r=>!r.covered).map(r=>r.query);
+        if (act === 'selected' && !target_rewrites.length) { toast('Select at least one row'); return; }
+        if (!target_rewrites.length) { toast('No gaps to fill'); return; }
+        await this.runClusterGeneration(c, target_rewrites, resultBox, panel);
+      });
+    });
+    return card;
+  },
+
+  async runClusterGeneration(c, target_rewrites, resultBox, panel) {
+    resultBox.innerHTML = '<div class="muted"><span class="spinner" style="border-color:#A22710;border-top-color:transparent;"></span> Generating…</div>';
+    // Default intent split: one of each for the targeted regions.
+    const body = {
+      brand_id: c.brand_id,
+      seed: c.seed || null,
+      ai_search: true,
+      target_rewrites,
+      intent_counts: {commercial: Math.max(1, Math.ceil(target_rewrites.length/3)), comparison: 0, informational: 0},
+    };
+    const res = await api.post('/api/prompts/generate', body);
+    if (res.error) { resultBox.innerHTML=''; toast(res.error); return; }
+    const taskId = res.task_id;
+    const poll = async () => {
+      const t = await api.get('/api/tasks/'+taskId);
+      resultBox.innerHTML = `<div class="muted"><span class="spinner" style="border-color:#A22710;border-top-color:transparent;"></span> ${esc(t.message||'')}</div>`;
+      if (t.status === 'done') {
+        const n = (t.result&&t.result.posts||[]).length;
+        toast(`Generated ${n} prompt(s)`);
+        this.renderClustersPanel(panel);
+        return;
+      }
+      if (t.status === 'error') { resultBox.innerHTML=''; toast('Error: '+(t.error||'')); return; }
+      setTimeout(poll, 1200);
+    };
+    poll();
+  },
+
+  // ---------------- Prompts panel ----------------
+  async renderPromptsPanel(panel) {
+    const b = this.current;
+    panel.innerHTML = '<div class="muted">Loading prompts…</div>';
+    const intentFilter = this._promptIntent || '';
+    let url = '/api/prompts?brand_id=' + b.id;
+    if (intentFilter) url += '&intent=' + encodeURIComponent(intentFilter);
+    const data = await api.get(url);
+    const prompts = data.prompts || [];
+    panel.innerHTML = '';
+
+    const bar = el(`<div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
+      <div class="flex items-center gap-2">
+        <label class="fld" style="margin:0;">Intent</label>
+        <select class="input" id="pf-intent" style="width:auto;">
+          <option value="">all</option>
+          <option value="commercial">commercial</option>
+          <option value="comparison">comparison</option>
+          <option value="informational">informational</option>
+        </select>
+      </div>
+      <a class="btn-primary btn-sm" id="pf-export" href="/api/prompts/export.csv?brand_id=${b.id}${intentFilter?'&intent='+encodeURIComponent(intentFilter):''}">Export CSV</a>
+    </div>`);
+    panel.appendChild(bar);
+    const sel = bar.querySelector('#pf-intent');
+    sel.value = intentFilter;
+    sel.addEventListener('change', ()=> { this._promptIntent = sel.value; this.renderPromptsPanel(panel); });
+
+    if (!prompts.length) { panel.appendChild(el('<div class="card muted">No prompts yet. Generate some on the <b>Generate</b> tab.</div>')); return; }
+
+    const table = el(`<div class="card" style="padding:0;overflow:hidden;">
+      <table class="report-table">
+        <thead><tr><th>#</th><th>Intent</th><th>Region</th><th>Seed</th><th>Title</th><th>Body</th><th>Score</th><th></th></tr></thead>
+        <tbody>
+        ${prompts.map((p,i)=>`<tr data-idx="${i}" style="cursor:pointer;">
+          <td>${p.post_number||''}</td>
+          <td><span class="chip chip-sub">${esc(p.intent||'')}</span></td>
+          <td>${esc((p.region)||'')}</td>
+          <td>${esc(truncate(p.seed||'',24))}</td>
+          <td style="max-width:240px;font-weight:600;"><span class="link">${esc(p.title)}</span></td>
+          <td style="max-width:320px;" class="muted">${esc(truncate(p.body||'',140))}</td>
+          <td><span class="chip ${ (p.ai_query_score||0)>=6?'chip-live':'chip-removed'}">${p.ai_query_score||0}</span></td>
+          <td><button class="row-del" data-num="${p.post_number}" title="Delete prompt" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:15px;">🗑</button></td>
+        </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`);
+    panel.appendChild(table);
+    // Row click -> open detail modal; trash button -> delete (stops propagation).
+    table.querySelectorAll('tbody tr').forEach(tr => {
+      const idx = parseInt(tr.dataset.idx, 10);
+      tr.addEventListener('click', ()=> this.openPromptModal(prompts[idx]));
+    });
+    table.querySelectorAll('.row-del').forEach(btn => {
+      btn.addEventListener('click', async (e)=> {
+        e.stopPropagation();
+        const num = parseInt(btn.dataset.num, 10);
+        if (!confirm('Delete prompt #' + num + '?')) return;
+        const r = await api.post('/api/prompts/delete', {brand_id: b.id, post_number: num});
+        if (r.deleted) { toast('Prompt deleted'); const bd = await api.get('/api/brands/'+b.id); this.current = bd.brand; this.renderPromptsPanel(panel); }
+        else toast('Could not delete');
+      });
+    });
+  },
+};
+
+window.addEventListener('DOMContentLoaded', ()=> App.init());
+</script>
+</body>
+</html>
