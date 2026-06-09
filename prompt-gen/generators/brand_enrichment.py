@@ -223,7 +223,7 @@ PAIN-POINTS: {pain_points}
 
 {page_section}
 
-Produce 3-5 DISTINCT, non-overlapping personas (different situations/intents — not
+Produce 4-6 DISTINCT, non-overlapping personas (different situations/intents — not
 rewordings). Ground them in the brand's real space; do NOT invent. For each, judge FIT
 honestly:
   "yes"  = squarely the brand's customer
@@ -267,7 +267,7 @@ def _normalize_personas(val):
             "vocab": str(item.get("vocab") or "").strip(),
             "fit": fit,
         })
-        if len(out) >= 5:
+        if len(out) >= 6:
             break
     return out
 
@@ -296,7 +296,7 @@ def generate_brand_personas(name, domain_url, category=None, audience=None,
         pain_points=_join(pain_points),
         page_section=_build_page_section(page_text),
     )
-    result = client.call(prompt, max_tokens=1500, temperature=0.4)
+    result = client.call(prompt, max_tokens=1400, temperature=0.4)
     if not result or not isinstance(result, dict):
         return []
     return _normalize_personas(result.get("personas"))

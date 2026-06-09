@@ -82,7 +82,7 @@ Return JSON only:
 {{
   "anchor": "the platform/use-case to keep every title on (short)",
   "rewrites": [
-    {{"query": "the sub-query, engine-style", "region": "one of the 6 axis names OR a brand-specific region", "fixed": true/false (true ONLY if it's one of the 6 standard axes), "persona": "the persona label this rewrite most represents, or (broad)"}},
+    {{"query": "the sub-query, engine-style", "region": "one of the 6 axis names OR a brand-specific region", "fixed": true/false (true ONLY if it's one of the 6 standard axes)}},
     ...
   ],
   "checklist": ["phrasing/term 1", "phrasing/term 2", "..."]
@@ -210,6 +210,24 @@ AI-SEARCH MODE — additionally enforce (these can CAP the score):
   A strong title is: on-anchor + a recommendation question + cleanly maps to its
   target sub-query.
 """
+
+
+_PERSONA_ASSIGN_PROMPT = """You are assigning buyer PERSONAS to search queries for a GEO campaign. For EACH query
+below, rank the personas from MOST to LEAST likely to be the person who would type that
+exact query — judge by their goal, trigger, and vocabulary.
+
+PERSONAS:
+{persona_block}
+
+QUERIES (in order):
+{query_block}
+
+Rank ALL personas for every query (a COMPLETE ranking, most-likely first). Do NOT return
+empty lists and do NOT omit any persona — even a weak fit goes at the END of that query's
+ranking. Use ONLY the persona labels exactly as written above.
+
+Return JSON only, with one ranked list per query IN THE SAME ORDER as the queries above:
+{{"assignments": [["label", "label", ...], ...]}}"""
 
 
 class PostGenerator:
@@ -419,9 +437,79 @@ class PostGenerator:
                      "and to decide which questions are worth targeting; SKIP any question "
                      "no persona above would credibly bring to THIS brand.")
         lines.append("  - Do NOT create a region per persona or a persona x axis matrix — "
-                     "still ONE rewrite per DISTINCT region. Tag each rewrite with the "
-                     'persona label it most represents (or "(broad)").')
+                     "still ONE rewrite per DISTINCT region.")
         return "\n".join(lines)
+
+    def _assign_personas_to_regions(self, rewrites, personas):
+        """Tag each rewrite['persona'] — code-guaranteed spread (Update #7).
+
+        The LLM supplies only a preference ranking; CODE guarantees full coverage and an
+        even distribution under a cap. Fit-driven (only fit yes/maybe personas), never
+        forced: each region gets the best-fitting AVAILABLE persona; the cap only
+        redirects to the next-best fit when one is already even-handedly used. Mutates
+        rewrites in place.
+        """
+        if not rewrites:
+            return
+        fit = [p for p in (personas or [])
+               if isinstance(p, dict) and (p.get("label") or "").strip()
+               and p.get("fit") in ("yes", "maybe")]
+        # 0 fit -> no tagging (no LLM call); 1 fit -> it owns every region.
+        if not fit:
+            for r in rewrites:
+                r["persona"] = ""
+            return
+        if len(fit) == 1:
+            only = fit[0]["label"].strip()
+            for r in rewrites:
+                r["persona"] = only
+            return
+
+        labels = [p["label"].strip() for p in fit]
+        label_by_key = {l.lower(): l for l in labels}
+
+        # One Claude call: full ranking per region (preference signal only).
+        persona_block = "\n".join(
+            f"  - {p['label']}: {p.get('profile', '')} | wants: {p.get('goal', '')} | "
+            f"trigger: {p.get('trigger', '')} | says: {p.get('vocab', '')}" for p in fit)
+        query_block = "\n".join(f"  {i + 1}. {r.get('query', '')}"
+                                for i, r in enumerate(rewrites))
+        prompt = _PERSONA_ASSIGN_PROMPT.format(persona_block=persona_block,
+                                               query_block=query_block)
+        result = self.client.call(prompt, max_tokens=900, temperature=0.2)
+        raw = result.get("assignments") if isinstance(result, dict) else None
+        if not isinstance(raw, list):
+            raw = []
+
+        # Per-region candidates: valid LLM-ranked labels (deduped) + backfill with every
+        # fit persona not yet listed (brand order). Guarantees a full fallback set.
+        ranked_by_region = []
+        for i in range(len(rewrites)):
+            ranked, seen = [], set()
+            row = raw[i] if (i < len(raw) and isinstance(raw[i], list)) else []
+            for lab in row:
+                real = label_by_key.get(str(lab).strip().lower())
+                if real and real not in seen:
+                    seen.add(real)
+                    ranked.append(real)
+            for l in labels:
+                if l not in seen:
+                    ranked.append(l)
+                    seen.add(l)
+            ranked_by_region.append(ranked)
+
+        # Greedy assignment under the minimum cap that still permits full coverage.
+        R, N = len(rewrites), len(labels)
+        cap = max(1, math.ceil(R / N))
+        counts = {l: 0 for l in labels}
+        for i, r in enumerate(rewrites):
+            chosen = next((c for c in ranked_by_region[i] if counts[c] < cap), None)
+            if chosen is None:  # defensive (should never fire); least-used persona
+                chosen = min(labels, key=lambda l: counts[l])
+            counts[chosen] += 1
+            r["persona"] = chosen
+        print("[personas] assigned: " + ", ".join(
+            f"{(r.get('region') or '?')}->{r['persona']}" for r in rewrites))
 
     # -------------------------------------------------------------------
     # Anchor-scoped grounding
@@ -529,11 +617,9 @@ class PostGenerator:
                 continue
             region = (r.get("region") or "(unsorted)").strip() or "(unsorted)"
             source = "fixed" if r.get("fixed") else "generated"
-            persona = (r.get("persona") or "").strip()
-            if persona.lower() in ("(broad)", "broad", "none"):
-                persona = ""
+            # persona is assigned by the dedicated code pass below, not the model.
             parsed.append({"query": q, "region": region, "source": source,
-                           "persona": persona})
+                           "persona": ""})
 
         if not parsed:
             return None
@@ -541,6 +627,8 @@ class PostGenerator:
         rewrites = self._dedup_cap_regions(parsed)
         if not rewrites:
             return None
+        # Persona tagging is a dedicated, code-enforced pass (not inline in the fan-out).
+        self._assign_personas_to_regions(rewrites, (brands[0].get("personas") or []))
         return {"anchor": anchor, "rewrites": rewrites, "checklist": checklist}
 
     @staticmethod
@@ -829,6 +917,55 @@ class PostGenerator:
         return [(it, 1) for it in INTENT_TYPES]
 
     # -------------------------------------------------------------------
+    # Create a cluster without generating prompts (fan-out only)
+    # -------------------------------------------------------------------
+    def create_cluster(self, brands, seed, observed_queries=None):
+        """Build a cluster (fan-out only — NO prompt generation). Reuse-only.
+
+        Mirrors the AI-Search front of `generate_posts`: ensure personas, ground the
+        anchor, fan out (which now also assigns personas), optionally fold observed
+        queries, persist. If a cluster already exists for the seed it is returned
+        unchanged (folding in any observed queries) — never clobbered.
+
+        Returns {brand_id, seed, anchor, cluster_size, created, reused} or {error}.
+        """
+        if not brands:
+            return {"error": "no brand"}
+        brand = brands[0]
+        brand_id = brand.get("id")
+        seed_norm = db.normalize_seed(seed)
+
+        existing = db.get_ai_search_cluster(brand_id, seed_norm)
+        if existing:
+            rewrites = list(existing.get("rewrites") or [])
+            if observed_queries:
+                rewrites = self._merge_observed(rewrites, observed_queries)["rewrites"]
+                self._assign_personas_to_regions(rewrites, brand.get("personas") or [])
+                db.upsert_ai_search_cluster(
+                    brand_id, seed_norm, existing.get("seed"), existing.get("anchor"),
+                    rewrites, existing.get("checklist") or [],
+                    backfilled=existing.get("backfilled") or 0)
+            return {"brand_id": brand_id, "seed": existing.get("seed") or "",
+                    "anchor": existing.get("anchor"), "cluster_size": len(rewrites),
+                    "created": False, "reused": True}
+
+        self._ensure_personas(brands)
+        learned_summary = ""
+        if seed_norm:
+            learned_summary = self._ground_brand_for_anchor(brands, seed, seed_norm)
+        fan = self._fanout_rewrites(brands, seed=seed, learned_summary=learned_summary)
+        if not fan:
+            return {"error": "fan-out produced no rewrites"}
+        rewrites, checklist = fan["rewrites"], fan["checklist"]
+        if observed_queries:
+            rewrites = self._merge_observed(rewrites, observed_queries)["rewrites"]
+            self._assign_personas_to_regions(rewrites, brand.get("personas") or [])
+        db.upsert_ai_search_cluster(brand_id, seed_norm, seed, fan["anchor"],
+                                    rewrites, checklist, backfilled=0)
+        return {"brand_id": brand_id, "seed": seed or "", "anchor": fan["anchor"],
+                "cluster_size": len(rewrites), "created": True, "reused": False}
+
+    # -------------------------------------------------------------------
     # Main entrypoint
     # -------------------------------------------------------------------
     def generate_posts(self, brands, count=None, custom_topics=None,
@@ -921,6 +1058,7 @@ class PostGenerator:
             if observed_queries:
                 merged = self._merge_observed(rewrites, observed_queries)
                 rewrites = merged["rewrites"]
+                self._assign_personas_to_regions(rewrites, brand.get("personas") or [])
         else:
             _tick("Fanning out into regions…", 12)
             fan = self._fanout_rewrites(brands, seed=seed,
@@ -936,6 +1074,7 @@ class PostGenerator:
             if observed_queries:
                 merged = self._merge_observed(rewrites, observed_queries)
                 rewrites = merged["rewrites"]
+                self._assign_personas_to_regions(rewrites, brand.get("personas") or [])
 
         # Persist / refresh the cluster.
         db.upsert_ai_search_cluster(
@@ -983,6 +1122,15 @@ class PostGenerator:
                 step += 1
                 _tick(f"Drafting {intent} prompts… ({step}/{total_steps})",
                       25 + int(40 * step / total_steps))
+
+        # Snap each candidate's target_query to the exact canonical rewrite (Update #8/#9).
+        # Scope = the rewrites THIS batch targeted, never the whole cluster, so a paraphrase
+        # can't bind to a textually-similar sibling region.
+        _canon = [t.get("query") for t in targets if t.get("query")]
+        for c in all_candidates:
+            _m = db.match_query_to_rewrites(c.get("target_query"), _canon)
+            if _m:
+                c["target_query"] = _m
 
         if not all_candidates:
             _tick("No candidates produced.", 100)
@@ -1118,14 +1266,24 @@ def build_cluster_summary(brand_id, seed_norm):
     cluster = db.get_ai_search_cluster(brand_id, seed_norm)
     if not cluster:
         return None
-    covered = {c.strip().lower() for c in db.get_covered_target_queries(brand_id, seed_norm)}
     num_map = db.get_post_numbers_by_target_query(brand_id, seed_norm)
+
+    # Tolerant binding (Update #8 retroactive net): map each post's stored target_query
+    # to its best canonical rewrite, so a legacy/attached paraphrase still counts as
+    # coverage. Newly generated prompts already store the canonical string (exact match).
+    rewrite_queries = [(r.get("query") or "").strip() for r in cluster["rewrites"]]
+    posts_by_rewrite = {}   # canonical query (lower) -> set of post numbers
+    for tq_lower, nums in num_map.items():
+        match = db.match_query_to_rewrites(tq_lower, rewrite_queries)
+        key = (match or tq_lower).strip().lower()
+        posts_by_rewrite.setdefault(key, set()).update(nums)
 
     rewrite_rows = []
     covered_count = 0
     for r in cluster["rewrites"]:
         q = (r.get("query") or "").strip()
-        is_covered = q.lower() in covered
+        nums = posts_by_rewrite.get(q.lower(), set())
+        is_covered = bool(nums)
         if is_covered:
             covered_count += 1
         rewrite_rows.append({
@@ -1134,7 +1292,7 @@ def build_cluster_summary(brand_id, seed_norm):
             "source": r.get("source") or "generated",
             "persona": (r.get("persona") or "").strip(),
             "covered": is_covered,
-            "post_numbers": sorted(num_map.get(q.lower(), [])),
+            "post_numbers": sorted(nums),
         })
 
     size = len(rewrite_rows)

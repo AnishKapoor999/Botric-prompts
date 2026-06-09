@@ -351,6 +351,23 @@ def api_list_clusters():
     return jsonify({"clusters": out})
 
 
+@app.route("/api/clusters/create", methods=["POST"])
+def api_cluster_create():
+    """Build a cluster via fan-out only (no prompt generation). Reuse-only."""
+    data = request.get_json(force=True, silent=True) or {}
+    brand_id = data.get("brand_id")
+    brand = db.get_brand(brand_id) if brand_id is not None else None
+    if not brand:
+        return jsonify({"error": "brand_id is required and must exist"}), 400
+    seed = data.get("seed") or ""
+    observed = data.get("observed_queries") or []
+    result = PostGenerator().create_cluster([brand], seed, observed_queries=observed)
+    if result.get("error"):
+        return jsonify(result), 502
+    result["cluster"] = build_cluster_summary(brand_id, db.normalize_seed(seed))
+    return jsonify(result)
+
+
 @app.route("/api/clusters/backfill", methods=["POST"])
 def api_cluster_backfill():
     data = request.get_json(force=True, silent=True) or {}
@@ -370,7 +387,32 @@ def api_cluster_add_posts():
     except (TypeError, ValueError):
         return jsonify({"error": "post_numbers must be integers"}), 400
     seed_norm = db.normalize_seed(seed)
-    result = db.attach_posts_to_cluster(brand_id, seed_norm, post_numbers)
+    cluster = db.get_ai_search_cluster(brand_id, seed_norm)
+    if not cluster:
+        return jsonify({"error": "cluster not found"}), 404
+
+    # Classify each attached prompt's title into the right region (reuse the same
+    # classifier the observed-paste path uses), then build {post_number: region}.
+    existing_regions, seen_r = [], set()
+    for r in cluster["rewrites"]:
+        reg = (r.get("region") or "").strip()
+        if reg and reg != "(unsorted)" and reg.lower() not in seen_r:
+            seen_r.add(reg.lower())
+            existing_regions.append(reg)
+    posts = db.get_posts_by_numbers(brand_id, post_numbers)
+    region_by_num = {}
+    if posts:
+        gen = PostGenerator()
+        titles = [(p.get("title") or "").strip() for p in posts]
+        classified = gen._classify_regions(titles, existing_regions)
+        region_by_title = {(c["query"] or "").strip().lower(): c["region"]
+                           for c in classified}
+        for p in posts:
+            t = (p.get("title") or "").strip().lower()
+            region_by_num[p["post_number"]] = region_by_title.get(t, "(from posts)")
+
+    result = db.attach_posts_to_cluster(brand_id, seed_norm, post_numbers,
+                                        region_by_num=region_by_num)
     result["cluster"] = build_cluster_summary(brand_id, seed_norm)
     return jsonify(result)
 

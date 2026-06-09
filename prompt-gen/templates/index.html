@@ -686,15 +686,33 @@ const App = {
     const data = await api.get('/api/clusters?brand_id=' + b.id);
     const clusters = data.clusters || [];
     panel.innerHTML = '';
-    const bar = el(`<div class="flex items-center justify-between mb-4">
-      <div class="muted" style="font-size:13px;">${clusters.length} cluster${clusters.length===1?'':'s'}</div>
-      <button class="btn-ghost btn-sm" id="cl-backfill">Backfill from prompts</button>
+    const bar = el(`<div class="mb-4">
+      <div class="flex items-center justify-between mb-2">
+        <div class="muted" style="font-size:13px;">${clusters.length} cluster${clusters.length===1?'':'s'}</div>
+        <button class="btn-ghost btn-sm" id="cl-backfill">Backfill from prompts</button>
+      </div>
+      <div class="flex items-center gap-2">
+        <input class="input" id="cl-create-seed" placeholder="New cluster seed (a topic/anchor) — leave blank to derive from the brand" />
+        <button class="btn-primary btn-sm whitespace-nowrap" id="cl-create">✨ Create cluster</button>
+      </div>
     </div>`);
     panel.appendChild(bar);
     bar.querySelector('#cl-backfill').addEventListener('click', async ()=> {
       const r = await api.post('/api/clusters/backfill', {brand_id: b.id});
       toast('Reconstructed ' + (r.created||0) + ' cluster(s)');
       this.renderClustersPanel(panel);
+    });
+    bar.querySelector('#cl-create').addEventListener('click', async ()=> {
+      const btn = bar.querySelector('#cl-create');
+      const seed = bar.querySelector('#cl-create-seed').value.trim();
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Creating…';
+      try {
+        const r = await api.post('/api/clusters/create', {brand_id: b.id, seed: seed || null});
+        if (r.error) { toast(r.error); btn.disabled = false; btn.textContent = '✨ Create cluster'; return; }
+        toast(r.reused ? 'Cluster already existed' : ('Created cluster — ' + (r.cluster_size||0) + ' regions'));
+        this.renderClustersPanel(panel);
+      } catch (e) { toast('Create failed'); btn.disabled = false; btn.textContent = '✨ Create cluster'; }
     });
 
     if (!clusters.length) { panel.appendChild(el('<div class="card muted">No clusters yet. Generate prompts (AI-Search on) to build one.</div>')); return; }
@@ -804,8 +822,14 @@ const App = {
     const res = await api.post('/api/prompts/generate', body);
     if (res.error) { resultBox.innerHTML=''; toast(res.error); return; }
     const taskId = res.task_id;
+    let missing = 0;
     const poll = async () => {
       const t = await api.get('/api/tasks/'+taskId);
+      if (!t || !t.status) {            // task GC'd / 404 -> stop, never spin forever
+        if (++missing >= 2) { resultBox.innerHTML=''; toast('Generation task no longer available'); return; }
+        setTimeout(poll, 1200); return;
+      }
+      missing = 0;
       resultBox.innerHTML = `<div class="muted"><span class="spinner" style="border-color:#A22710;border-top-color:transparent;"></span> ${esc(t.message||'')}</div>`;
       if (t.status === 'done') {
         const n = (t.result&&t.result.posts||[]).length;

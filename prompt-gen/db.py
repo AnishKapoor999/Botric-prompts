@@ -406,6 +406,58 @@ def normalize_rewrites(raw):
     return out
 
 
+# --- Tolerant query <-> rewrite matching (paraphrase-safe coverage) ---------
+_MATCH_STOPWORDS = {
+    "the", "a", "an", "of", "for", "to", "in", "on", "and", "or", "is", "are", "do",
+    "does", "my", "i", "what", "whats", "which", "best", "how", "when", "where", "with",
+    "that", "this", "it", "you", "your", "get", "getting", "as", "at", "be", "can",
+    "vs", "versus", "into", "by", "should", "use", "using", "good", "any",
+}
+
+
+def _norm_query(q):
+    s = re.sub(r"[^\w\s]", " ", (q or "").lower())
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _content_tokens(q):
+    return {t for t in _norm_query(q).split() if t and t not in _MATCH_STOPWORDS}
+
+
+def match_query_to_rewrites(target_query, rewrite_queries):
+    """Best canonical rewrite query for `target_query`, or None.
+
+    Normalized-exact first; else content-token overlap requiring >=2 shared tokens,
+    scoring max(Jaccard, overlap-coefficient), and returning the best rewrite scoring
+    >= 0.5. Tolerant of paraphrase, conservative against mis-binding.
+    """
+    if not target_query or not rewrite_queries:
+        return None
+    tq_norm = _norm_query(target_query)
+    if tq_norm:
+        for rq in rewrite_queries:
+            if _norm_query(rq) == tq_norm:
+                return rq
+    tq_tokens = _content_tokens(target_query)
+    if not tq_tokens:
+        return None
+    best, best_score = None, 0.0
+    for rq in rewrite_queries:
+        rq_tokens = _content_tokens(rq)
+        if not rq_tokens:
+            continue
+        shared = tq_tokens & rq_tokens
+        if len(shared) < 2:
+            continue
+        union = tq_tokens | rq_tokens
+        jaccard = len(shared) / len(union) if union else 0.0
+        overlap = len(shared) / min(len(tq_tokens), len(rq_tokens))
+        score = max(jaccard, overlap)
+        if score > best_score:
+            best, best_score = rq, score
+    return best if best_score >= 0.5 else None
+
+
 def get_ai_search_cluster(brand_id, seed_norm):
     with _conn() as conn:
         row = conn.execute(
@@ -573,11 +625,17 @@ def backfill_clusters_from_posts(brand_id=None):
     return created
 
 
-def attach_posts_to_cluster(brand_id, seed_norm, post_numbers):
+def attach_posts_to_cluster(brand_id, seed_norm, post_numbers, region_by_num=None):
     """Fold existing prompts (by per-brand number) into a cluster.
 
     Re-stamps each post's ai_search_meta seed to the cluster seed so coverage picks it
-    up, and adds any new target_query as a manual rewrite.
+    up. When `region_by_num` ({post_number: region}) is supplied, each prompt is routed
+    to the right region:
+      - region matches an EXISTING cluster region -> the prompt COVERS it (its
+        target_query is set to that region's primary query);
+      - else -> a NEW manual rewrite is added {query: title, region: <classified or
+        "(from posts)">, source: "manual", persona: ""} and the prompt targets it.
+    Without `region_by_num`, the prior "(unsorted)" behavior is kept.
     """
     cluster = get_ai_search_cluster(brand_id, seed_norm)
     if not cluster:
@@ -589,32 +647,62 @@ def attach_posts_to_cluster(brand_id, seed_norm, post_numbers):
 
     rewrites = list(cluster["rewrites"])
     existing_queries = {(r.get("query") or "").strip().lower() for r in rewrites}
-    attached = []
+    # region label (lowercased) -> the region's primary rewrite query
+    region_to_query = {}
+    for r in rewrites:
+        rk = (r.get("region") or "").strip().lower()
+        if rk and rk not in region_to_query:
+            region_to_query[rk] = (r.get("query") or "").strip()
+
+    region_by_num = region_by_num or {}
+    attached, existing, new = [], [], []
 
     with _write_lock, _conn() as conn:
         for p in posts:
+            num = p["post_number"]
             meta = p.get("ai_search_meta") or {}
             if not isinstance(meta, dict):
                 meta = {}
-            tq = (meta.get("target_query") or p.get("title") or "").strip()
+            title = (p.get("title") or "").strip()
+            classified = (region_by_num.get(num) or region_by_num.get(str(num)) or "").strip()
+            ck = classified.lower()
+
+            if classified and ck in region_to_query:
+                # Covers an existing region: target its primary query.
+                tq = region_to_query[ck]
+                existing.append(num)
+            elif classified:
+                # New region for this prompt.
+                tq = title
+                if tq and tq.lower() not in existing_queries:
+                    rewrites.append({"query": tq, "region": classified,
+                                     "source": "manual", "persona": ""})
+                    existing_queries.add(tq.lower())
+                    region_to_query.setdefault(ck, tq)
+                new.append(num)
+            else:
+                # No classification supplied -> legacy behavior.
+                tq = (meta.get("target_query") or title).strip()
+                if tq and tq.lower() not in existing_queries:
+                    rewrites.append({"query": tq, "region": "(from posts)",
+                                     "source": "manual", "persona": ""})
+                    existing_queries.add(tq.lower())
+
             meta["seed"] = cluster["seed"] or ""
-            if not meta.get("target_query"):
-                meta["target_query"] = tq
+            meta["target_query"] = tq
             if not meta.get("anchor"):
                 meta["anchor"] = cluster.get("anchor")
             conn.execute(
                 "UPDATE posts SET ai_search_meta=? WHERE brand_id=? AND post_number=?",
-                (json.dumps(meta), brand_id, p["post_number"]),
+                (json.dumps(meta), brand_id, num),
             )
-            if tq and tq.lower() not in existing_queries:
-                rewrites.append({"query": tq, "region": "(unsorted)", "source": "manual"})
-                existing_queries.add(tq.lower())
-            attached.append(p["post_number"])
+            attached.append(num)
 
     upsert_ai_search_cluster(brand_id, seed_norm, cluster["seed"], cluster.get("anchor"),
                              rewrites, cluster.get("checklist") or [],
                              backfilled=cluster.get("backfilled") or 0)
-    return {"attached": attached, "missing": missing}
+    return {"attached": attached, "missing": missing, "existing": existing,
+            "new": new, "cluster_size": len(rewrites)}
 
 
 def _now():
