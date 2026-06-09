@@ -695,6 +695,10 @@ const App = {
         <input class="input" id="cl-create-seed" placeholder="New cluster seed (a topic/anchor) — leave blank to derive from the brand" />
         <button class="btn-primary btn-sm whitespace-nowrap" id="cl-create">✨ Create cluster</button>
       </div>
+      <details class="mt-2">
+        <summary style="cursor:pointer;font-weight:600;font-size:12px;color:var(--text-muted);">Add fanned-out queries (optional)</summary>
+        <textarea class="input mt-2" id="cl-create-observed" rows="3" placeholder="Real fan-out sub-queries you saw ChatGPT/Gemini emit — one per line. Each is sorted into the new cluster's regions."></textarea>
+      </details>
     </div>`);
     panel.appendChild(bar);
     bar.querySelector('#cl-backfill').addEventListener('click', async ()=> {
@@ -705,10 +709,11 @@ const App = {
     bar.querySelector('#cl-create').addEventListener('click', async ()=> {
       const btn = bar.querySelector('#cl-create');
       const seed = bar.querySelector('#cl-create-seed').value.trim();
+      const observed = bar.querySelector('#cl-create-observed').value.split('\n').map(s=>s.trim()).filter(Boolean);
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner"></span> Creating…';
       try {
-        const r = await api.post('/api/clusters/create', {brand_id: b.id, seed: seed || null});
+        const r = await api.post('/api/clusters/create', {brand_id: b.id, seed: seed || null, observed_queries: observed});
         if (r.error) { toast(r.error); btn.disabled = false; btn.textContent = '✨ Create cluster'; return; }
         toast(r.reused ? 'Cluster already existed' : ('Created cluster — ' + (r.cluster_size||0) + ' regions'));
         this.renderClustersPanel(panel);
