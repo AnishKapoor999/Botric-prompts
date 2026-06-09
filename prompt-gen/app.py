@@ -176,6 +176,22 @@ def api_reenrich_brand(brand_id):
     return jsonify({"draft": draft})
 
 
+@app.route("/api/brands/<int:brand_id>/personas/regenerate", methods=["POST"])
+def api_regenerate_personas(brand_id):
+    """Clear + rebuild the brand's buyer personas on demand."""
+    brand = db.get_brand(brand_id)
+    if not brand:
+        return jsonify({"error": "not found"}), 404
+    from generators.brand_enrichment import generate_brand_personas
+    personas = generate_brand_personas(
+        brand.get("name") or "", brand.get("domain_url") or "",
+        category=brand.get("category"), audience=brand.get("audience"),
+        use_cases=brand.get("use_cases"), pain_points=brand.get("pain_points"),
+    )
+    db.update_brand(brand_id, {"personas": personas})
+    return jsonify({"personas": personas})
+
+
 # ===========================================================================
 # Prompt generation (async)
 # ===========================================================================

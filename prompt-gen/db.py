@@ -110,6 +110,7 @@ def init_db():
             "enriched_at": "TEXT",
             "icps": "TEXT",
             "learned_context": "TEXT",
+            "personas": "TEXT",
         }
         existing = {r["name"] for r in conn.execute("PRAGMA table_info(brands)")}
         for col, typ in brand_alter_cols.items():
@@ -130,6 +131,8 @@ def _brand_row_to_dict(row):
     d["icps"] = _loads(d.get("icps"), [])
     # Anchor-scoped grounding accumulator: JSON object keyed by seed_norm.
     d["learned_context"] = _loads(d.get("learned_context"), {})
+    # Buyer personas (brand-level, JSON list).
+    d["personas"] = _loads(d.get("personas"), [])
     # Convenience: count of prompts for this brand (filled by callers when needed).
     return d
 
@@ -205,6 +208,10 @@ def update_brand(brand_id, data):
         # Stored verbatim as a JSON string; accept a dict too. Never touches `context`.
         lc = data.get("learned_context")
         _set("learned_context", lc if isinstance(lc, str) else json.dumps(lc or {}))
+    if "personas" in data:
+        # Stored verbatim as a JSON string; accept a list too.
+        ps = data.get("personas")
+        _set("personas", ps if isinstance(ps, str) else json.dumps(ps or []))
     _set("enriched_at", enriched_at)
 
     if not fields:
@@ -298,6 +305,7 @@ def _post_row_to_dict(row):
     d["anchor"] = meta.get("anchor")
     d["target_query"] = meta.get("target_query")
     d["region"] = meta.get("region")
+    d["persona"] = meta.get("persona")
     return d
 
 
@@ -386,13 +394,15 @@ def normalize_rewrites(raw):
             q = (r.get("query") or "").strip()
             region = r.get("region") or "(unsorted)"
             source = r.get("source") or "generated"
+            persona = (r.get("persona") or "").strip()   # legacy -> ""
         else:
             q = str(r).strip()
-            region, source = "(unsorted)", "generated"
+            region, source, persona = "(unsorted)", "generated", ""
         k = q.lower()
         if q and k not in seen:
             seen.add(k)
-            out.append({"query": q, "region": region, "source": source})
+            out.append({"query": q, "region": region, "source": source,
+                        "persona": persona})
     return out
 
 

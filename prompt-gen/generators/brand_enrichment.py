@@ -210,6 +210,98 @@ def enrich_brand_for_anchor(name, domain_url, anchor, client=None):
     }
 
 
+_PERSONAS_PROMPT = """You are defining the buyer PERSONAS for a GEO campaign — the distinct kinds of people who
+would search for what this brand offers. These decide which recommendation questions are
+worth targeting and whether THIS brand is a credible answer for each.
+
+BRAND NAME: {name}
+BRAND URL: {url}
+CATEGORY: {category}
+AUDIENCE: {audience}
+USE-CASES: {use_cases}
+PAIN-POINTS: {pain_points}
+
+{page_section}
+
+Produce 3-5 DISTINCT, non-overlapping personas (different situations/intents — not
+rewordings). Ground them in the brand's real space; do NOT invent. For each, judge FIT
+honestly:
+  "yes"  = squarely the brand's customer
+  "maybe"= plausible / adjacent
+  "no"   = wants something the brand isn't (include a couple when realistic — this is the
+           winnability filter).
+
+For each persona return:
+  - label:       2-4 word name ("solo podcaster")
+  - profile:     1 sentence on who they are / their situation
+  - trigger:     what makes them start searching
+  - goal:        what they want to achieve / buy
+  - constraints: their main constraint (budget, compliance, time, skill…)
+  - vocab:       2-4 words/phrases this persona actually uses
+  - fit:         "yes" | "maybe" | "no"
+
+Return JSON only:
+{{"personas": [{{"label": "string", "profile": "string", "trigger": "string", "goal": "string", "constraints": "string", "vocab": "string", "fit": "yes"}}]}}"""
+
+
+def _normalize_personas(val):
+    """Require a non-empty label; coerce fit to yes/maybe/no (default maybe); cap at 5."""
+    if not isinstance(val, list):
+        return []
+    out = []
+    for item in val:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label") or "").strip()
+        if not label:
+            continue
+        fit = str(item.get("fit") or "").strip().lower()
+        if fit not in ("yes", "maybe", "no"):
+            fit = "maybe"
+        out.append({
+            "label": label,
+            "profile": str(item.get("profile") or "").strip(),
+            "trigger": str(item.get("trigger") or "").strip(),
+            "goal": str(item.get("goal") or "").strip(),
+            "constraints": str(item.get("constraints") or "").strip(),
+            "vocab": str(item.get("vocab") or "").strip(),
+            "fit": fit,
+        })
+        if len(out) >= 5:
+            break
+    return out
+
+
+def generate_brand_personas(name, domain_url, category=None, audience=None,
+                            use_cases=None, pain_points=None, client=None):
+    """Return 3-5 distinct, fit-honest buyer personas for a brand (or [] on failure).
+
+    Grounds on the brand's own homepage + confident knowledge — never invents.
+    """
+    client = client or ClaudeClient()
+    html = _fetch_homepage(domain_url)
+    page_text = _extract_visible_text(html)
+
+    def _join(v):
+        if isinstance(v, list):
+            return ", ".join(str(x).strip() for x in v if str(x).strip()) or "(none)"
+        return str(v or "").strip() or "(none)"
+
+    prompt = _PERSONAS_PROMPT.format(
+        name=name or "(unknown)",
+        url=domain_url or "(none)",
+        category=_join(category),
+        audience=_join(audience),
+        use_cases=_join(use_cases),
+        pain_points=_join(pain_points),
+        page_section=_build_page_section(page_text),
+    )
+    result = client.call(prompt, max_tokens=1500, temperature=0.4)
+    if not result or not isinstance(result, dict):
+        return []
+    return _normalize_personas(result.get("personas"))
+
+
 def enrich_brand(name, domain_url, client=None):
     """Return an enrichment draft dict (never saves). Includes `_page_fetched`."""
     client = client or ClaudeClient()

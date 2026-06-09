@@ -283,6 +283,17 @@ const App = {
         <div id="bf-icps"></div>
       </div>
 
+      ${brand && brand.id ? `<div class="mb-4">
+        <div class="flex items-center justify-between mb-2">
+          <label class="fld" style="margin:0;">Buyer personas <span class="muted" style="font-weight:400;">(auto-generated; used as a fan-out lens)</span></label>
+          <button class="btn-ghost btn-sm" id="bf-regen-personas">↻ Regenerate</button>
+        </div>
+        <div id="bf-personas">${(b.personas||[]).length ? (b.personas||[]).map(p=>`<div class="card" style="padding:10px 12px;margin-bottom:8px;">
+          <div style="font-weight:600;font-size:14px;">${esc(p.label||'')} <span class="chip ${p.fit==='yes'?'chip-live':(p.fit==='no'?'chip-removed':'chip-sub')}" style="font-size:11px;">fit: ${esc(p.fit||'maybe')}</span></div>
+          ${p.profile?`<div class="muted" style="font-size:12px;margin-top:3px;">${esc(p.profile)}</div>`:''}
+        </div>`).join('') : '<div class="muted" style="font-size:13px;">None yet — generated on the first AI-Search generate, or click Regenerate.</div>'}</div>
+      </div>` : ''}
+
       <div class="flex justify-end gap-2">
         <button class="btn-ghost" id="bf-cancel">Cancel</button>
         <button class="btn-primary" id="bf-save">${brand ? 'Save changes' : 'Save brand'}</button>
@@ -310,6 +321,22 @@ const App = {
     }
     icps.forEach(i => icpWrap.appendChild(icpRow(i)));
     root.querySelector('#bf-add-icp').addEventListener('click', ()=> icpWrap.appendChild(icpRow({})));
+
+    const regenBtn = root.querySelector('#bf-regen-personas');
+    if (regenBtn) regenBtn.addEventListener('click', async ()=> {
+      regenBtn.disabled = true; regenBtn.textContent = '↻ Generating…';
+      try {
+        const r = await api.post('/api/brands/' + brand.id + '/personas/regenerate', {});
+        const wrap = root.querySelector('#bf-personas');
+        const ps = (r && r.personas) || [];
+        wrap.innerHTML = ps.length ? ps.map(p=>`<div class="card" style="padding:10px 12px;margin-bottom:8px;">
+          <div style="font-weight:600;font-size:14px;">${esc(p.label||'')} <span class="chip ${p.fit==='yes'?'chip-live':(p.fit==='no'?'chip-removed':'chip-sub')}" style="font-size:11px;">fit: ${esc(p.fit||'maybe')}</span></div>
+          ${p.profile?`<div class="muted" style="font-size:12px;margin-top:3px;">${esc(p.profile)}</div>`:''}
+        </div>`).join('') : '<div class="muted" style="font-size:13px;">No personas returned.</div>';
+        toast('Regenerated ' + ps.length + ' persona(s)');
+      } catch(e) { toast('Persona regeneration failed'); }
+      regenBtn.disabled = false; regenBtn.textContent = '↻ Regenerate';
+    });
 
     function collectIcps() {
       return Array.from(icpWrap.querySelectorAll('.card')).map(r => ({
@@ -615,6 +642,7 @@ const App = {
           <span class="chip chip-brand">#${p.post_number||'?'}</span>
           <span class="chip chip-sub">${esc(p.intent||'')}</span>
           ${meta.region? `<span class="chip chip-sub">${esc(meta.region)}</span>`:''}
+          ${meta.persona? `<span class="chip chip-sub">🧑 ${esc(meta.persona)}</span>`:''}
           <span class="chip ${ (p.ai_query_score||0)>=6?'chip-live':'chip-removed'}">score ${p.ai_query_score||0}</span>
         </div>
         <button class="btn-ghost btn-sm" id="pm-close">Close</button>
@@ -695,7 +723,7 @@ const App = {
         <tbody>
         ${c.rewrites.map((r,i)=>`<tr>
           <td><input type="checkbox" class="cl-row" data-q="${esc(r.query)}" /></td>
-          <td>${esc(r.region)} <span class="muted">${srcMark(r.source)}</span></td>
+          <td>${esc(r.region)} <span class="muted">${srcMark(r.source)}</span>${r.persona?` <span class="chip chip-sub" style="font-size:11px;">🧑 ${esc(r.persona)}</span>`:''}</td>
           <td>${esc(r.query)}</td>
           <td>${r.covered? '<span class="chip chip-live">covered</span>':'<span class="chip chip-removed">gap</span>'}</td>
           <td>${(r.post_numbers||[]).map(n=>'#'+n).join(' ')||'—'}</td>

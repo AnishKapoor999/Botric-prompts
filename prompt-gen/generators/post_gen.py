@@ -40,7 +40,7 @@ NOT one literal phrasing.
 
 BRAND CONTEXT (ground the queries here; NEVER output the target brand name(s): {target_names}):
 {brand_block}
-{seed_line}{grounding_line}
+{seed_line}{grounding_line}{persona_lens}
 Do this in your head, then return the merged result:
   1. ANCHOR — identify the core platform / use-case this campaign targets. If the
      seed names a platform or use-case (e.g. "Instagram Reels", "podcast intros",
@@ -82,7 +82,7 @@ Return JSON only:
 {{
   "anchor": "the platform/use-case to keep every title on (short)",
   "rewrites": [
-    {{"query": "the sub-query, engine-style", "region": "one of the 6 axis names OR a brand-specific region", "fixed": true/false (true ONLY if it's one of the 6 standard axes)}},
+    {{"query": "the sub-query, engine-style", "region": "one of the 6 axis names OR a brand-specific region", "fixed": true/false (true ONLY if it's one of the 6 standard axes), "persona": "the persona label this rewrite most represents, or (broad)"}},
     ...
   ],
   "checklist": ["phrasing/term 1", "phrasing/term 2", "..."]
@@ -356,6 +356,74 @@ class PostGenerator:
         return "\n".join(lines)
 
     # -------------------------------------------------------------------
+    # Buyer personas (brand-level, lazy + cached)
+    # -------------------------------------------------------------------
+    def _ensure_personas(self, brands):
+        """Lazily generate + cache brand-level personas (one Claude call, one-time).
+
+        Gate is the `personas` field (not enriched_at) -> existing brands auto-fill on
+        their next AI generate. Mutates the in-memory brand; never touches `context`.
+        """
+        if not brands:
+            return
+        brand = brands[0]
+        if brand.get("personas"):
+            return  # cached
+        bid = brand.get("id")
+        from generators.brand_enrichment import generate_brand_personas
+        personas = generate_brand_personas(
+            brand.get("name") or "", brand.get("domain_url") or "",
+            category=brand.get("category"), audience=brand.get("audience"),
+            use_cases=brand.get("use_cases"), pain_points=brand.get("pain_points"),
+            client=self.client)
+        if not personas:
+            return
+        brand["personas"] = personas              # mutate in-memory for this run
+        if bid is not None:
+            try:
+                db.update_brand(bid, {"personas": json.dumps(personas)})
+            except Exception as e:
+                print(f"[personas] persist failed for brand {bid}: {e}")
+
+    @staticmethod
+    def _fit_personas(brands):
+        """Personas with a label and fit in {yes, maybe} (drops fit:no — winnability)."""
+        if not brands:
+            return []
+        out = []
+        for p in (brands[0].get("personas") or []):
+            if (isinstance(p, dict) and (p.get("label") or "").strip()
+                    and p.get("fit") in ("yes", "maybe")):
+                out.append(p)
+        return out
+
+    def _build_persona_lens(self, brands):
+        """Fan-out LENS block from the winnable personas. '' when there are none."""
+        fit = self._fit_personas(brands)
+        if not fit:
+            return ""
+        lines = ["\nPERSONAS — the real askers for this brand (use as a LENS, NOT as "
+                 "separate regions):"]
+        for p in fit:
+            label = (p.get("label") or "").strip()
+            profile = (p.get("profile") or "").strip()
+            goal = (p.get("goal") or "").strip()
+            vocab = (p.get("vocab") or "").strip()
+            bits = f"  - {label}: {profile}"
+            if goal:
+                bits += f" | wants: {goal}"
+            if vocab:
+                bits += f" | says it like: {vocab}"
+            lines.append(bits)
+        lines.append("  - Use them to GROUND the rewrites in how real askers phrase things "
+                     "and to decide which questions are worth targeting; SKIP any question "
+                     "no persona above would credibly bring to THIS brand.")
+        lines.append("  - Do NOT create a region per persona or a persona x axis matrix — "
+                     "still ONE rewrite per DISTINCT region. Tag each rewrite with the "
+                     'persona label it most represents (or "(broad)").')
+        return "\n".join(lines)
+
+    # -------------------------------------------------------------------
     # Anchor-scoped grounding
     # -------------------------------------------------------------------
     def _ground_brand_for_anchor(self, brands, seed, seed_norm):
@@ -427,11 +495,14 @@ class PostGenerator:
             grounding_line = ("\nWHAT THIS BRAND OFFERS FOR THE SEED TOPIC (stay truthful "
                               f"to this): {learned_summary.strip()}")
 
+        persona_lens = self._build_persona_lens(brands)
+
         prompt = _FANOUT_PROMPT.format(
             target_names=target_names,
             brand_block=brand_block,
             seed_line=seed_line,
             grounding_line=grounding_line,
+            persona_lens=persona_lens,
         )
         result = self.client.call(prompt, max_tokens=1500, temperature=0.7)
         if not result or not isinstance(result, dict):
@@ -448,7 +519,8 @@ class PostGenerator:
                 q = str(r).strip()
                 if not q:
                     continue
-                parsed.append({"query": q, "region": "(unsorted)", "source": "generated"})
+                parsed.append({"query": q, "region": "(unsorted)",
+                               "source": "generated", "persona": ""})
                 continue
             q = (r.get("query") or "").strip()
             if not q:
@@ -457,7 +529,11 @@ class PostGenerator:
                 continue
             region = (r.get("region") or "(unsorted)").strip() or "(unsorted)"
             source = "fixed" if r.get("fixed") else "generated"
-            parsed.append({"query": q, "region": region, "source": source})
+            persona = (r.get("persona") or "").strip()
+            if persona.lower() in ("(broad)", "broad", "none"):
+                persona = ""
+            parsed.append({"query": q, "region": region, "source": source,
+                           "persona": persona})
 
         if not parsed:
             return None
@@ -822,6 +898,9 @@ class PostGenerator:
                                            seed=seed, custom_topics=custom_topics)
 
         # ---------- AI-Search flow ----------
+        # Buyer personas: one-time per brand, used as a lens in the fan-out below.
+        self._ensure_personas(brands)
+
         seed_norm = db.normalize_seed(seed)
         _tick("Resolving cluster…", 5)
 
@@ -898,6 +977,7 @@ class PostGenerator:
                 )
                 for c in cands:
                     c["region"] = target.get("region")
+                    c["persona"] = target.get("persona") or ""
                     c["score_pending"] = True
                 all_candidates.extend(cands)
                 step += 1
@@ -940,6 +1020,7 @@ class PostGenerator:
                     "anchor": anchor,
                     "target_query": c.get("target_query"),
                     "region": c.get("region"),
+                    "persona": c.get("persona") or "",
                 },
                 "concept_checklist": checklist,
                 "prompt_version": f"{PROMPT_VERSION}-ai-search",
@@ -1051,6 +1132,7 @@ def build_cluster_summary(brand_id, seed_norm):
             "query": q,
             "region": r.get("region") or "(unsorted)",
             "source": r.get("source") or "generated",
+            "persona": (r.get("persona") or "").strip(),
             "covered": is_covered,
             "post_numbers": sorted(num_map.get(q.lower(), [])),
         })
