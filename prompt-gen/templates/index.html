@@ -755,7 +755,7 @@ const App = {
           <td>${esc(r.region)} <span class="muted">${srcMark(r.source)}</span>${r.persona?` <span class="chip chip-sub" style="font-size:11px;">🧑 ${esc(r.persona)}</span>`:''}</td>
           <td>${esc(r.query)}</td>
           <td>${r.covered? '<span class="chip chip-live">covered</span>':'<span class="chip chip-removed">gap</span>'}</td>
-          <td>${(r.post_numbers||[]).map(n=>'#'+n).join(' ')||'—'}</td>
+          <td style="max-width:340px;">${(r.prompts&&r.prompts.length)? r.prompts.map((p,pi)=>`<div class="cl-prompt" data-ri="${i}" data-pi="${pi}" style="cursor:pointer;margin-bottom:4px;line-height:1.35;"><span class="chip chip-brand" style="font-size:10px;">#${p.post_number}</span> <span class="link" style="font-size:13px;">${esc(truncate(p.title||'',90))}</span></div>`).join('') : '<span class="muted">—</span>'}</td>
         </tr>`).join('')}
         </tbody>
       </table>
@@ -768,6 +768,19 @@ const App = {
       </div>
       <div class="cl-result mt-3"></div>
     </div>`);
+
+    // Click a region's prompt to open its detail modal (context from cluster + row).
+    card.querySelectorAll('.cl-prompt').forEach(elp => {
+      elp.addEventListener('click', () => {
+        const r = rows[+elp.dataset.ri]; const pr = r && r.prompts[+elp.dataset.pi];
+        if (!pr) return;
+        this.openPromptModal({
+          post_number: pr.post_number, title: pr.title, intent: pr.intent,
+          ai_query_score: pr.ai_query_score, brand_id: c.brand_id,
+          ai_search_meta: {seed: c.seed, anchor: c.anchor, region: r.region, target_query: r.query, persona: r.persona},
+        });
+      });
+    });
 
     const checks = card.querySelectorAll('.cl-row');
     const countEl = card.querySelector('.cl-count');

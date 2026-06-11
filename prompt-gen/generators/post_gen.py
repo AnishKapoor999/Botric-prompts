@@ -1318,11 +1318,22 @@ def build_cluster_summary(brand_id, seed_norm):
         key = (match or tq_lower).strip().lower()
         posts_by_rewrite.setdefault(key, set()).update(nums)
 
+    # Fetch the generated prompts (title/intent/score) so each region can show them.
+    all_nums = sorted({n for nums in posts_by_rewrite.values() for n in nums})
+    post_by_num = {}
+    for p in (db.get_posts_by_numbers(brand_id, all_nums) if all_nums else []):
+        post_by_num[p["post_number"]] = {
+            "post_number": p["post_number"],
+            "title": p.get("title") or "",
+            "intent": p.get("intent") or "",
+            "ai_query_score": p.get("ai_query_score") or 0,
+        }
+
     rewrite_rows = []
     covered_count = 0
     for r in cluster["rewrites"]:
         q = (r.get("query") or "").strip()
-        nums = posts_by_rewrite.get(q.lower(), set())
+        nums = sorted(posts_by_rewrite.get(q.lower(), set()))
         is_covered = bool(nums)
         if is_covered:
             covered_count += 1
@@ -1332,7 +1343,8 @@ def build_cluster_summary(brand_id, seed_norm):
             "source": r.get("source") or "generated",
             "persona": (r.get("persona") or "").strip(),
             "covered": is_covered,
-            "post_numbers": sorted(nums),
+            "post_numbers": nums,
+            "prompts": [post_by_num[n] for n in nums if n in post_by_num],
         })
 
     size = len(rewrite_rows)
