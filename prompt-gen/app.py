@@ -391,17 +391,22 @@ def api_cluster_add_posts():
     if not cluster:
         return jsonify({"error": "cluster not found"}), 404
 
-    # Classify each attached prompt's title into the right region (reuse the same
-    # classifier the observed-paste path uses), then build {post_number: region}.
-    existing_regions, seen_r = [], set()
-    for r in cluster["rewrites"]:
-        reg = (r.get("region") or "").strip()
-        if reg and reg != "(unsorted)" and reg.lower() not in seen_r:
-            seen_r.add(reg.lower())
-            existing_regions.append(reg)
+    region = (data.get("region") or "").strip()
     posts = db.get_posts_by_numbers(brand_id, post_numbers)
     region_by_num = {}
-    if posts:
+    if region:
+        # One region explicitly ticked -> bind all attached prompts to it (no classify).
+        for p in posts:
+            region_by_num[p["post_number"]] = region
+    elif posts:
+        # Else classify each attached prompt's title into the right region (reuse the
+        # same classifier the observed-paste path uses).
+        existing_regions, seen_r = [], set()
+        for r in cluster["rewrites"]:
+            reg = (r.get("region") or "").strip()
+            if reg and reg != "(unsorted)" and reg.lower() not in seen_r:
+                seen_r.add(reg.lower())
+                existing_regions.append(reg)
         gen = PostGenerator()
         titles = [(p.get("title") or "").strip() for p in posts]
         classified = gen._classify_regions(titles, existing_regions)

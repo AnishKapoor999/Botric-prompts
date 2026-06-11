@@ -56,7 +56,7 @@ Do this in your head, then return the merged result:
      THIS brand/seed (SKIP any that don't fit); fill the "Constraint" slot with this
      brand's dominant buying constraint (copyright/licensing, price/free, compliance,
      integration, speed...):
-       - Category / best tool      -> "best X for Y"
+       - Category / leading option -> the leading option in the category for their need (phrase naturally; do NOT default to a "best …" wording)
        - Comparison / alternative  -> "X vs Y", "alternative to <competitor>"
        - Constraint                -> the #1 buying concern (e.g. copyright-safe, budget)
        - Use-case / workflow        -> the specific job (auto-sync to video, for podcasts)
@@ -71,7 +71,8 @@ Do this in your head, then return the merged result:
      work") comparisons. (For product / retailer brands this is already satisfied —
      keep the usual product / buy-intent regions.)
   3. Write ONE rewrite per region — phrased the way the engines actually search
-     (short, keyword-ish, real intent), distinct from the others. HARD RULE: if two
+     (short, keyword-ish, real intent), distinct from the others. VARY the phrasing
+     across regions; do NOT force a "best …" shape on every one. HARD RULE: if two
      rewrites would get essentially the SAME AI answer, keep only ONE. Aim for
      ~5-8 rewrites TOTAL — fewer, distinct regions beat many synonyms.
   4. Produce a concise CONCEPT/PHRASING CHECKLIST: the key natural-language
@@ -126,7 +127,7 @@ ANCHOR (every title MUST stay on this platform/use-case; you may broaden ONLY to
 NAMED adjacent variant, never to something generic like "my videos"): {anchor}
 
 INTENT: {intent}
-  - commercial: someone looking to choose/buy a tool ("best X for Y", "what should I use for Z").
+  - commercial: someone looking to choose/buy a tool — its natural answer names a specific product to use.
   - comparison: weighing named options ("X vs Y", "alternative to <competitor>").
   - informational: advice-seeking that should still surface a product recommendation.
 
@@ -141,11 +142,13 @@ WRITE THE POST so that:
   - The TITLE is ALWAYS a recommendation QUESTION — never a vent, testimonial, rant, or
     status update ("so tired of X", "X changed my life"). It reads like a real person
     asking what to use/buy/try (not a bare statement, not machine-speak). On-anchor. A
-    verbatim copy of the engine query looks like spam — paraphrase it naturally.
+    verbatim copy of the engine query looks like spam — paraphrase it naturally. VARY the
+    structure/opening — do NOT default to a "best …" shape; phrase it as a real person
+    would actually ask.
   - OUR-BRAND CHECK — the TITLE's natural answer must name the SAME KIND of entity as
     this brand (see its "Category" in BRAND CONTEXT above):
-      - PRODUCT / TOOL / APP → ask for the best product/tool for the use-case ("best X
-        for Y", "which X should I use for Z"); product-vs-product comparisons are fine.
+      - PRODUCT / TOOL / APP → ask which product/tool to use for the use-case (its natural
+        answer names a specific product); product-vs-product comparisons are fine.
       - SUPPLIER / RETAILER / MARKETPLACE → ask where to buy / who sells / the best place
         to order the thing.
       - SERVICE / PROVIDER / CLINIC (you go to it to GET something done) → ask for the
@@ -170,11 +173,11 @@ specific product/service recommended by AI assistants (ChatGPT / Perplexity / Go
 Title: "{title}"
 Body preview: "{body_preview}"
 
-Rate 0-10 on BOTH dimensions together:
+Rate 0-10 on BOTH dimensions together — judge by THE ANSWER THE TITLE WOULD GET, not its wording:
   (1) How likely a real person types this exact question (or close paraphrase) into an AI / search engine, AND
   (2) Whether the NATURAL ANSWER is to RECOMMEND a specific product / brand / service to use or buy.
 
-High (8-10): Clearly recommendation-seeking — a helpful AI would answer by naming specific products/services/suppliers ("best X for Y", "which X should I use for Z", "go-to X for Y", "alternative to X for Y", "where to buy X online", "best place to order X", "who sells X").
+High (8-10): Clearly recommendation-seeking — a helpful AI would answer by naming specific products/services/suppliers. ANY phrasing qualifies as long as the natural answer is a specific recommendation (which-to-use, where-to-buy, who-sells, alternative-to, go-to). Do NOT favor a "best …" wording — varied phrasings score just as high.
 Medium (5-7): Advice-seeking that MIGHT surface a product recommendation ("has anyone tried X", "what do you use for Y").
 Low (1-4): Generic information / efficacy / how-it-works / "what to look for" / concept questions where the answer is an EXPLANATION rather than a product recommendation (e.g. "do X actually work", "how does X work", "what is X"); also rants, memes, very personal one-offs.
 CRITICAL: first-person VENTS, TESTIMONIALS and STATUS UPDATES that don't ASK for anything are NOT recommendation-seeking — score them 1-4 even if on-topic (e.g. "frustrated with traditional doctors dismissing X", "so tired of Y", "started using Z — game changer", "X changed my life", "finally found something that works"). A title only scores high if it explicitly asks for what to use/buy/try.
@@ -676,42 +679,58 @@ class PostGenerator:
                 out.append({"query": q, "region": "(unsorted)"})
         return out
 
-    def _merge_observed(self, rewrites, observed_queries):
-        """Add an observed query only if its region isn't present and it isn't a dup.
+    @staticmethod
+    def _fallback_region_label(q):
+        words = (q or "").split()
+        return " ".join(words[:4]) if words else "(manual)"
 
-        Returns {rewrites, added[], skipped[]} (skips carry a reason).
+    def _regions_from_queries(self, queries):
+        """Turn pasted fan-out queries into region objects — one per DISTINCT query.
+
+        Pasted queries are real observed sub-queries, so each DEFINES its own region
+        (overlapping intents are fine; only exact duplicates collapse). One labeling call
+        names each query (cosmetic — a query-derived fallback is used when the classifier
+        returns none). Returns [{query, region, source:"manual", persona:""}].
+        """
+        seen, distinct = set(), []
+        for q in (queries or []):
+            q = str(q).strip()
+            k = q.lower()
+            if q and k not in seen:
+                seen.add(k)
+                distinct.append(q)
+        if not distinct:
+            return []
+        # Reuse the observed-paste classifier with NO existing regions -> fresh labels.
+        classified = self._classify_regions(distinct, [])
+        label_by_q = {(c.get("query") or "").strip().lower(): (c.get("region") or "").strip()
+                      for c in classified}
+        out = []
+        for q in distinct:
+            region = label_by_q.get(q.lower()) or ""
+            if not region or region == "(unsorted)":
+                region = self._fallback_region_label(q)
+            out.append({"query": q, "region": region, "source": "manual", "persona": ""})
+        return out
+
+    def _merge_observed(self, rewrites, observed_queries):
+        """Region-per-query: each pasted query becomes its OWN new manual region.
+
+        Skips only an exact duplicate of a query already in the cluster. Returns
+        {rewrites, added[], skipped[]} (skips carry a reason).
         """
         rewrites = list(rewrites or [])
-        existing_regions = []
-        existing_region_keys = set()
-        existing_queries = set()
-        for r in rewrites:
-            region = (r.get("region") or "(unsorted)").strip()
-            if region and region != "(unsorted)" and region.lower() not in existing_region_keys:
-                existing_region_keys.add(region.lower())
-                existing_regions.append(region)
-            existing_queries.add((r.get("query") or "").strip().lower())
-
-        classified = self._classify_regions(observed_queries, existing_regions)
+        existing_queries = {(r.get("query") or "").strip().lower() for r in rewrites}
         added, skipped = [], []
-        for item in classified:
-            q = item["query"]
-            region = item["region"]
-            qk = q.lower()
-            rk = region.lower()
+        for rw in self._regions_from_queries(observed_queries):
+            qk = rw["query"].lower()
             if qk in existing_queries:
-                skipped.append({"query": q, "region": region, "reason": "duplicate query"})
+                skipped.append({"query": rw["query"], "region": rw["region"],
+                                "reason": "duplicate query"})
                 continue
-            if region != "(unsorted)" and rk in existing_region_keys:
-                skipped.append({"query": q, "region": region, "reason": "region already covered"})
-                continue
-            new_rw = {"query": q, "region": region, "source": "manual"}
-            rewrites.append(new_rw)
+            rewrites.append(rw)
             existing_queries.add(qk)
-            if region != "(unsorted)":
-                existing_region_keys.add(rk)
-                existing_regions.append(region)
-            added.append(new_rw)
+            added.append(rw)
         return {"rewrites": rewrites, "added": added, "skipped": skipped}
 
     # -------------------------------------------------------------------
@@ -922,12 +941,13 @@ class PostGenerator:
     def create_cluster(self, brands, seed, observed_queries=None):
         """Build a cluster (fan-out only — NO prompt generation). Reuse-only.
 
-        Mirrors the AI-Search front of `generate_posts`: ensure personas, ground the
-        anchor, fan out (which now also assigns personas), optionally fold observed
-        queries, persist. If a cluster already exists for the seed it is returned
-        unchanged (folding in any observed queries) — never clobbered.
+        Manual fan-out queries DEFINE the regions (Update #11): each distinct pasted query
+        becomes its own region and LEADS; the auto fan-out then adds ONLY the angles the
+        manual queries didn't cover (`prior_coverage`). If a cluster already exists for the
+        seed it is returned unchanged (folding in any observed queries) — never clobbered.
 
-        Returns {brand_id, seed, anchor, cluster_size, created, reused} or {error}.
+        Returns {brand_id, seed, anchor, cluster_size, manual_regions, gap_regions,
+        skipped, created, reused} or {error}.
         """
         if not brands:
             return {"error": "no brand"}
@@ -938,8 +958,10 @@ class PostGenerator:
         existing = db.get_ai_search_cluster(brand_id, seed_norm)
         if existing:
             rewrites = list(existing.get("rewrites") or [])
+            added, skipped = [], []
             if observed_queries:
-                rewrites = self._merge_observed(rewrites, observed_queries)["rewrites"]
+                merged = self._merge_observed(rewrites, observed_queries)
+                rewrites, added, skipped = merged["rewrites"], merged["added"], merged["skipped"]
                 self._assign_personas_to_regions(rewrites, brand.get("personas") or [])
                 db.upsert_ai_search_cluster(
                     brand_id, seed_norm, existing.get("seed"), existing.get("anchor"),
@@ -947,23 +969,38 @@ class PostGenerator:
                     backfilled=existing.get("backfilled") or 0)
             return {"brand_id": brand_id, "seed": existing.get("seed") or "",
                     "anchor": existing.get("anchor"), "cluster_size": len(rewrites),
-                    "created": False, "reused": True}
+                    "manual_regions": len(added), "gap_regions": 0,
+                    "skipped": len(skipped), "created": False, "reused": True}
 
         self._ensure_personas(brands)
         learned_summary = ""
         if seed_norm:
             learned_summary = self._ground_brand_for_anchor(brands, seed, seed_norm)
-        fan = self._fanout_rewrites(brands, seed=seed, learned_summary=learned_summary)
-        if not fan:
+
+        # Manual regions FIRST (each pasted query is its own region).
+        manual_regions = self._regions_from_queries(observed_queries) if observed_queries else []
+        manual_queries = [m["query"] for m in manual_regions]
+        nonblank = sum(1 for q in (observed_queries or []) if str(q).strip())
+        skipped = max(0, nonblank - len(manual_regions))   # exact-dup pastes dropped
+
+        # Fan-out fills ONLY the remaining space (prior_coverage = the manual queries).
+        fan = self._fanout_rewrites(brands, seed=seed,
+                                    prior_coverage=manual_queries or None,
+                                    learned_summary=learned_summary)
+        gap_rewrites = fan["rewrites"] if fan else []
+        checklist = fan["checklist"] if fan else []
+        if not manual_regions and not gap_rewrites:
             return {"error": "fan-out produced no rewrites"}
-        rewrites, checklist = fan["rewrites"], fan["checklist"]
-        if observed_queries:
-            rewrites = self._merge_observed(rewrites, observed_queries)["rewrites"]
-            self._assign_personas_to_regions(rewrites, brand.get("personas") or [])
-        db.upsert_ai_search_cluster(brand_id, seed_norm, seed, fan["anchor"],
+
+        rewrites = manual_regions + gap_rewrites          # manual-first ordering
+        self._assign_personas_to_regions(rewrites, brand.get("personas") or [])
+        anchor = (fan or {}).get("anchor")
+        db.upsert_ai_search_cluster(brand_id, seed_norm, seed, anchor,
                                     rewrites, checklist, backfilled=0)
-        return {"brand_id": brand_id, "seed": seed or "", "anchor": fan["anchor"],
-                "cluster_size": len(rewrites), "created": True, "reused": False}
+        return {"brand_id": brand_id, "seed": seed or "", "anchor": anchor,
+                "cluster_size": len(rewrites), "manual_regions": len(manual_regions),
+                "gap_regions": len(gap_rewrites), "skipped": skipped,
+                "created": True, "reused": False}
 
     # -------------------------------------------------------------------
     # Main entrypoint
@@ -1090,6 +1127,9 @@ class PostGenerator:
         else:
             targets = [r for r in rewrites
                        if (r.get("query") or "").strip().lower() not in covered_lower]
+            # Manual (user-captured) regions are the priority generation targets.
+            _ord = {"manual": 0, "fixed": 1, "generated": 2}
+            targets.sort(key=lambda r: _ord.get(r.get("source"), 3))
         if not targets:
             targets = list(rewrites)  # nothing uncovered -> regenerate across the cluster
 

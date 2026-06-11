@@ -715,7 +715,11 @@ const App = {
       try {
         const r = await api.post('/api/clusters/create', {brand_id: b.id, seed: seed || null, observed_queries: observed});
         if (r.error) { toast(r.error); btn.disabled = false; btn.textContent = '✨ Create cluster'; return; }
-        toast(r.reused ? 'Cluster already existed' : ('Created cluster — ' + (r.cluster_size||0) + ' regions'));
+        if (r.reused) {
+          toast((r.manual_regions ? (r.manual_regions + ' region(s) added from your queries · ' + (r.skipped||0) + ' skipped') : 'Cluster already existed'));
+        } else {
+          toast(`Created "${seed || '(brand default)'}" — ${r.cluster_size||0} regions · ${r.manual_regions||0} from your queries · ${r.gap_regions||0} gap-fill · ${r.skipped||0} duplicates skipped`);
+        }
         this.renderClustersPanel(panel);
       } catch (e) { toast('Create failed'); btn.disabled = false; btn.textContent = '✨ Create cluster'; }
     });
@@ -726,6 +730,8 @@ const App = {
 
   clusterCard(c, panel) {
     const srcMark = s => s==='fixed' ? '★' : (s==='manual' ? '✎' : '⚙');
+    const _ord = s => s==='manual' ? 0 : (s==='fixed' ? 1 : 2);   // manual rows lead
+    const rows = [...(c.rewrites||[])].sort((a,b)=>_ord(a.source)-_ord(b.source));
     const card = el(`<div class="card mb-4">
       <div class="flex items-start justify-between">
         <div>
@@ -744,8 +750,8 @@ const App = {
       <table class="report-table mt-3">
         <thead><tr><th style="width:28px;"></th><th>Region</th><th>Sub-query</th><th>Status</th><th>Prompts</th></tr></thead>
         <tbody>
-        ${c.rewrites.map((r,i)=>`<tr>
-          <td><input type="checkbox" class="cl-row" data-q="${esc(r.query)}" /></td>
+        ${rows.map((r,i)=>`<tr>
+          <td><input type="checkbox" class="cl-row" data-q="${esc(r.query)}" data-region="${esc(r.region||'')}" /></td>
           <td>${esc(r.region)} <span class="muted">${srcMark(r.source)}</span>${r.persona?` <span class="chip chip-sub" style="font-size:11px;">🧑 ${esc(r.persona)}</span>`:''}</td>
           <td>${esc(r.query)}</td>
           <td>${r.covered? '<span class="chip chip-live">covered</span>':'<span class="chip chip-removed">gap</span>'}</td>
@@ -792,16 +798,21 @@ const App = {
           const observed = q.split('\n').map(s=>s.trim()).filter(Boolean);
           const r = await api.post('/api/clusters/add-fanout', {brand_id:c.brand_id, seed:c.seed, observed_queries:observed});
           if (r.error) { toast(r.error); return; }
-          toast(`Added ${ (r.added||[]).length }, skipped ${ (r.skipped||[]).length }`);
+          toast(`${ (r.added||[]).length } region(s) added from your queries · ${ (r.skipped||[]).length } duplicate(s) skipped`);
           this.renderClustersPanel(panel); return;
         }
         if (act === 'addposts') {
           const q = prompt('Prompt numbers to attach (comma-separated, e.g. 1,4,7):');
           if (!q) return;
           const nums = q.split(',').map(s=>parseInt(s.trim(),10)).filter(n=>!isNaN(n));
-          const r = await api.post('/api/clusters/add-posts', {brand_id:c.brand_id, seed:c.seed, post_numbers:nums});
+          // If exactly one region row is ticked, bind the attached prompts to THAT region
+          // directly (skip auto-classify); zero/multiple ticked -> auto-classify.
+          const tickedRegions = Array.from(checks).filter(c=>c.checked).map(c=>c.dataset.region);
+          const body = {brand_id:c.brand_id, seed:c.seed, post_numbers:nums};
+          if (tickedRegions.length === 1 && tickedRegions[0]) body.region = tickedRegions[0];
+          const r = await api.post('/api/clusters/add-posts', body);
           if (r.error) { toast(r.error); return; }
-          toast(`Attached ${ (r.attached||[]).length } prompt(s)`);
+          toast(`Attached ${ (r.attached||[]).length } prompt(s)` + (body.region ? ` to "${body.region}"` : ''));
           this.renderClustersPanel(panel); return;
         }
         // fill / selected -> generation targeting specific rewrites or gaps
